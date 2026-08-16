@@ -102,7 +102,7 @@ The only pi/prime coupling left is `agent-runtime` (both adapters are opt-in beh
 - 4 configs: `guppy-core` (native), `guppy-prime` (prime-agent), `guppy-pi` (pi adapter), `prime-raw` (raw prime-agent).
 - `--dry-run` (materialize + gate without any LLM), `--max-attempts`, `--attempt-timeout`, per-config model/provider/base-url/api-key, `loop-demo`, `sleep-cycle`.
 - **Loud spawn failures:** a missing/unlaunchable prime-agent now fails attempt 1 with a red `Failed to launch prime-agent … ENOENT` and breaks the retry loop, instead of recording silent 0-token "failures" (see §7.3).
-- In-repo prime bundle auto-resolution (`resolvePrimeBinary()`), so `guppy-prime` works out of the box.
+- Prime-agent resolution: `resolvePrimeBinary()` walks up from the workspace and uses a sibling `prime-agent/` checkout's built CLI when present; otherwise it falls back to a bare `prime-agent` on PATH (which fails loudly on attempt 1, not silently). `--prime-binary <path>` overrides either.
 - **ContextOps token-savings:** bridges `estimated_reduction_pct` + the installed ContextOps version and reports `tokensSaved` per capture — in `results.json`, a "Tokens saved (est.)" column in the report's Context table, a per-config line under Summary, an attribution footer (PyPI + version), and the console `Done:` line.
 
 ### 3.9 Sleep cycle
@@ -201,7 +201,7 @@ Artifacts: every recorded run's `results.json` + `report.md` is committed under 
 
 1. **`FileChanged` never emitted on the prime path** (fixed) — parser read the file path from `tool_execution_end`, but prime-agent's documented `tool_execution_end` carries no `args`; the path only exists on `tool_execution_start`. The fix-attribution learning loop was silently dead on prime runs.
 2. **Baseline gate could fetch junk from npm** (fixed) — on repos without TypeScript, `npx tsc` downloads a bogus `tsc@2.0.4` package. `levelAvailable()` now skips unavailable levels.
-3. **guppy-prime recorded silent 0-token failures** (fixed) — defaulted to a `prime-agent` binary not on PATH; spawn errors were swallowed into gate output. Now resolves the in-repo bundle and fails loudly on attempt 1.
+3. **guppy-prime recorded silent 0-token failures** (fixed) — defaulted to a `prime-agent` binary not on PATH; spawn errors were swallowed into gate output. Now resolves a sibling `prime-agent/` checkout's built CLI when present and fails loudly on attempt 1 otherwise.
 4. **qwen2.5-coder answers tool requests as fenced JSON text** (fixed) — added a text-embedded tool-call fallback to the OpenAI client (+ unit test).
 5. **prime-agent hangs on custom Ollama providers** (open, external) — works via OpenRouter; the hang is inside prime-agent before its first LLM request.
 6. **prime-agent's `ipython` tool breaks on Windows** (open, external) — shell commands sent into the Python kernel, WSL-mount and DOS-output glitches; burned 59k tokens without editing a file.
