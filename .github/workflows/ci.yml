@@ -43,4 +43,13 @@ jobs:
         run: pnpm build
 
       - name: Test
-        run: pnpm test
+        shell: bash
+        run: |
+          pnpm test > /tmp/test.log 2>&1; exit_code=$?
+          if [ $exit_code -ne 0 ]; then
+            echo "::error::=== CI TEST FAILURE (exit $exit_code) ==="
+            grep -aE "FAIL|×|AssertionError|Error:|failed " /tmp/test.log | head -40 | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+          fi
+          exit $exit_code
