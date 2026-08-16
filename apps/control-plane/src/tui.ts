@@ -107,6 +107,43 @@ export function runTui(options: ChatOptions): Promise<void> {
       );
     };
 
+    // The engine (SessionManager, verification engine, core runtime) reports
+    // its internal progress through console.log/error. In the alt-screen those
+    // raw writes would interleave with pi-tui's synchronized frames and corrupt
+    // the layout, so pipe them into the scrollable transcript instead. Restored
+    // before the goodbye line so the exit message reaches the real terminal.
+    const origConsole = {
+      log: console.log,
+      error: console.error,
+      warn: console.warn,
+      info: console.info,
+    };
+    const stringifyArg = (a: unknown): string => {
+      if (typeof a === 'string') return a;
+      try {
+        return JSON.stringify(a);
+      } catch {
+        return String(a);
+      }
+    };
+    const pipeConsole = (...args: unknown[]): void => {
+      const text = args.map(stringifyArg).join(' ');
+      for (const line of text.split('\n')) {
+        if (line.trim() !== '') transcript.append(line);
+      }
+      tui.requestRender();
+    };
+    const restoreConsole = (): void => {
+      console.log = origConsole.log;
+      console.error = origConsole.error;
+      console.warn = origConsole.warn;
+      console.info = origConsole.info;
+    };
+    console.log = (...a: unknown[]) => pipeConsole(...a);
+    console.error = (...a: unknown[]) => pipeConsole(...a);
+    console.warn = (...a: unknown[]) => pipeConsole(...a);
+    console.info = (...a: unknown[]) => pipeConsole(...a);
+
     // -----------------------------------------------------------------------
     // Lifecycle
     // -----------------------------------------------------------------------
@@ -131,6 +168,7 @@ export function runTui(options: ChatOptions): Promise<void> {
       detachLiveStream();
       tui.stop();
       await engine.shutdown();
+      restoreConsole();
       console.log(chalk.gray('[Guppy] Bye.'));
       resolve();
     };
@@ -139,8 +177,15 @@ export function runTui(options: ChatOptions): Promise<void> {
       if (shuttingDown) return;
       shuttingDown = true;
       // A turn may be mid-flight (Ctrl+C or /exit while the agent works):
-      // defer the teardown until the turn lands rather than racing it.
-      if (!busy) await finishShutdown();
+      // defer the teardown until the turn lands rather than racing it — but
+      // say so immediately, otherwise it looks like Ctrl+C was ignored.
+      if (busy) {
+        status.setText(chalk.yellow('[Guppy] shutting down — finishing the current turn…'));
+        transcript.append(chalk.yellow('[Guppy] Shutting down after the current turn finishes…'));
+        tui.requestRender();
+        return;
+      }
+      await finishShutdown();
     };
 
     // -----------------------------------------------------------------------
