@@ -65,6 +65,10 @@ let dockerAvailable = false;
 beforeAll(async () => {
   try {
     await run('docker', ['info'], { timeout: 10_000 });
+    // The daemon alone isn't enough: the sandbox image is built locally
+    // (`pnpm docker:build`) and won't exist on fresh CI runners, where the
+    // container e2e must be skipped rather than run against a missing image.
+    await run('docker', ['image', 'inspect', 'guppy/executor:latest'], { timeout: 10_000 });
     dockerAvailable = true;
   } catch {
     dockerAvailable = false;
