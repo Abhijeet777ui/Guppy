@@ -3,19 +3,21 @@
  * readline REPL drives.
  *
  * The engine (event store, sandbox, runtime, session manager) is shared with
- * `runChat` via `createChatEngine`; this module is purely the rendering shell
- * on top of pi-tui: a scrollable transcript fed by the live event stream, an
- * input dock, a status line, and a `/models` SelectList overlay. Every turn is
- * still a gated task run through `runChatTurn`, so the TUI and the REPL are two
- * views of the identical harness.
+ * `runChat` via `createChatEngine`; this module is the rendering shell on top
+ * of pi-tui. The input is pi-tui's `Editor` wired to a slash-command
+ * autocomplete provider — type `/` to drop down the command menu, and
+ * `/model <partial>` to drop down matching models — the same interaction
+ * prime-agent's `pi` uses. Every turn is still a gated task run through
+ * `runChatTurn`, so the TUI and the REPL are two views of the identical
+ * harness.
  */
 
 import chalk from 'chalk';
 import {
-  Input,
+  CombinedAutocompleteProvider,
+  Editor,
   ProcessTerminal,
   ScrollView,
-  SelectList,
   Text,
   TuiAltScreen,
   VStack,
@@ -23,7 +25,7 @@ import {
   matchesKey,
   truncateToWidth,
 } from '@earendil-works/pi-tui';
-import type { Component, OverlayHandle } from '@earendil-works/pi-tui';
+import type { Component, EditorTheme, SlashCommand } from '@earendil-works/pi-tui';
 import { now, ulid } from '@guppy/contracts';
 import type { Task, VerificationLevel } from '@guppy/contracts';
 import {
@@ -41,7 +43,7 @@ import type { ThinkingLevel } from '@guppy/models';
 import { createChatEngine, runChatTurn } from './chat.js';
 import type { ChatOptions } from './chat.js';
 import { renderLiveEvent } from './live-stream.js';
-import { Transcript, buildModelItems, compactTokens, renderStatusLine, selectListTheme } from './tui-logic.js';
+import { Transcript, compactTokens, renderStatusLine, selectListTheme } from './tui-logic.js';
 
 /** Adapter: expose the pure `Transcript` buffer as a pi-tui `Component`. */
 class TranscriptView implements Component {
@@ -67,7 +69,61 @@ export function runTui(options: ChatOptions): Promise<void> {
 
     const transcript = new Transcript();
     const status = new Text('', 0, 0);
-    const input = new Input();
+
+    // pi-tui's Editor is the multi-line chat bar (with history + autocomplete)
+    // that prime's `pi` uses. The slash-command provider powers the "/" menu.
+    const editorTheme: EditorTheme = {
+      borderColor: (text: string) => chalk.dim(text),
+      selectList: selectListTheme(),
+    };
+    const editor = new Editor(tui, editorTheme);
+
+    const modelCompletions = (prefix: string) => {
+      const models = listModels({ query: prefix, coreCompatibleOnly: true, limit: 30 });
+      return models.map((m) => ({
+        value: m.id,
+        label: `${m.provider}/${m.id}`,
+        description: `ctx ${compactTokens(m.contextWindow)} · max ${compactTokens(m.maxTokens)}${m.reasoning ? ' · reasoning' : ''}`,
+      }));
+    };
+
+    const slashCommands: SlashCommand[] = [
+      { name: 'help', description: 'show this help' },
+      { name: 'models', description: 'list models', argumentHint: 'query' },
+      {
+        name: 'model',
+        description: 'switch the active model',
+        argumentHint: 'id or query',
+        getArgumentCompletions: modelCompletions,
+      },
+      {
+        name: 'provider',
+        description: 'list or set the provider',
+        argumentHint: 'id',
+        getArgumentCompletions: (prefix) =>
+          listProviders()
+            .filter((p) => p.coreCompatibleCount > 0 && p.id.includes(prefix))
+            .map((p) => ({ value: p.id, label: p.id, description: `${p.name} · ${p.modelCount} models` })),
+      },
+      {
+        name: 'thinking',
+        description: 'set reasoning level',
+        argumentHint: 'level',
+        getArgumentCompletions: () =>
+          (THINKING_LEVELS as readonly string[]).map((l) => ({ value: l, label: l })),
+      },
+      {
+        name: 'verify',
+        description: 'set verification level (0-5)',
+        argumentHint: 'level',
+        getArgumentCompletions: () => ['0', '1', '2', '3', '4', '5'].map((v) => ({ value: v, label: v })),
+      },
+      { name: 'verbose', description: 'toggle raw event logging' },
+      { name: 'setup', description: 'store a provider API key', argumentHint: 'provider key' },
+      { name: 'exit', description: 'leave the chat' },
+      { name: 'quit', description: 'leave the chat' },
+    ];
+    editor.setAutocompleteProvider(new CombinedAutocompleteProvider(slashCommands, engine.repoPath));
 
     if (isViewportTUI(tui)) {
       tui.setLayoutRoot(
@@ -83,11 +139,11 @@ export function runTui(options: ChatOptions): Promise<void> {
             minSize: 1,
           },
           { component: status, basis: 'auto', shrink: 1, minSize: 1 },
-          { component: input, basis: 'auto', shrink: 1, minSize: 1 },
+          { component: editor, basis: 'auto', shrink: 1, minSize: 1 },
         ]),
       );
     }
-    tui.setFocus(input);
+    tui.setFocus(editor);
 
     let busy = false;
     let shuttingDown = false;
@@ -111,8 +167,9 @@ export function runTui(options: ChatOptions): Promise<void> {
     // The engine (SessionManager, verification engine, core runtime) reports
     // its internal progress through console.log/error. In the alt-screen those
     // raw writes would interleave with pi-tui's synchronized frames and corrupt
-    // the layout, so pipe them into the scrollable transcript instead. Restored
-    // before the goodbye line so the exit message reaches the real terminal.
+    // the layout, so swallow them (and only surface them with /verbose).
+    // Restored before the goodbye line so the exit message reaches the real
+    // terminal.
     const origConsole = {
       log: console.log,
       error: console.error,
@@ -128,8 +185,6 @@ export function runTui(options: ChatOptions): Promise<void> {
       }
     };
     const pipeConsole = (...args: unknown[]): void => {
-      // Swallow engine chatter entirely unless /verbose — it must neither reach
-      // stdout (screen corruption) nor flood the clean transcript.
       if (!verbose) return;
       const text = args.map(stringifyArg).join(' ');
       for (const line of text.split('\n')) {
@@ -193,88 +248,11 @@ export function runTui(options: ChatOptions): Promise<void> {
       await finishShutdown();
     };
 
-    // -----------------------------------------------------------------------
-    // Model picker overlay
-    // -----------------------------------------------------------------------
-
-    let modelsOverlay: OverlayHandle | null = null;
-    let modelsSelectList: SelectList | null = null;
-    let modelFilter = '';
-
-    const closeModels = (): void => {
-      if (modelsOverlay) {
-        modelsOverlay.hide();
-        modelsOverlay = null;
-      }
-      modelsSelectList = null;
-      modelFilter = '';
-      tui.setFocus(input);
-      tui.requestRender();
-    };
-
-    const openModels = (query?: string): void => {
-      if (modelsOverlay) return;
-      const models = listModels({
-        ...(activeProvider ? { provider: activeProvider } : {}),
-        ...(query ? { query } : {}),
-        coreCompatibleOnly: true,
-        limit: 200,
-      });
-      if (models.length === 0) {
-        transcript.append(
-          chalk.yellow(
-            `No models match${query ? ` "${query}"` : ''}. Try /models with a different term, or /provider to pick a provider first.`,
-          ),
-        );
-        tui.requestRender();
-        return;
-      }
-      transcript.append(
-        chalk.gray(
-          `Model picker (${models.length} shown) — type to filter, ↑/↓ to move, Enter to switch, Esc to close.`,
-        ),
-      );
-      const list = new SelectList(buildModelItems(models), 12, selectListTheme());
-      list.onSelect = (item) => {
-        const id = item.value;
-        closeModels();
-        void switchModel(id);
-      };
-      list.onCancel = () => closeModels();
-      modelsSelectList = list;
-      modelFilter = query ?? '';
-      if (modelFilter) list.setFilter(modelFilter);
-      modelsOverlay = tui.showOverlay(list, {
-        anchor: 'top-center',
-        width: '90%',
-        maxHeight: '60%',
-        offsetY: 2,
-      });
-      tui.requestRender();
-    };
-
-    // Type-ahead filter for the picker: printable chars refine the list while
-    // the overlay is open; arrows/Enter/Escape/Ctrl+C still reach the SelectList.
+    // Ctrl+C quits the chat — unless the editor's autocomplete dropdown is
+    // open, in which case it should just dismiss the dropdown.
     tui.addInputListener((data) => {
-      if (modelsOverlay) {
-        if (data === '\x7f' || data === '\x08') {
-          modelFilter = modelFilter.slice(0, -1);
-          modelsSelectList?.setFilter(modelFilter);
-          tui.requestRender();
-          return { consume: true };
-        }
-        if (data.length === 1) {
-          const code = data.charCodeAt(0);
-          if (code >= 32 && code < 127) {
-            modelFilter += data;
-            modelsSelectList?.setFilter(modelFilter);
-            tui.requestRender();
-            return { consume: true };
-          }
-        }
-        return undefined;
-      }
       if (matchesKey(data, 'ctrl+c')) {
+        if (editor.isShowingAutocomplete()) return undefined;
         void requestShutdown();
         return { consume: true };
       }
@@ -291,14 +269,14 @@ export function runTui(options: ChatOptions): Promise<void> {
       chalk.gray(
         `  Runtime: ${options.runtime}  Model: ${options.model}  Verification: ${verificationLevel}  Max turns: ${options.maxTurns}`,
       ),
-      chalk.gray('  Commands: /help  /models  /provider  /model  /thinking  /verify <0-5>  /exit'),
+      chalk.gray('  Type / for commands, or just describe a task and press Enter.'),
     ];
 
     const helpLines = (): string[] => [
       chalk.gray('  /help              show this help'),
-      chalk.gray('  /models [query]    open the model picker (type to filter, arrows to move, Enter to switch, Esc to close)'),
-      chalk.gray('  /provider [id]     list providers, or filter the picker to one provider'),
-      chalk.gray('  /model [id]        open the model picker (or switch straight to a known id)'),
+      chalk.gray('  /models [query]    list core-compatible models'),
+      chalk.gray('  /model [id]        switch the active model (type /model <partial> for a dropdown)'),
+      chalk.gray('  /provider [id]     list providers, or filter to one provider'),
       chalk.gray('  /thinking [level]  show or set reasoning level (off|minimal|low|medium|high|xhigh|max)'),
       chalk.gray('  /verify <level>    set the verification level (0-5)'),
       chalk.gray('  /verbose           toggle raw event/engine logging on or off'),
@@ -306,9 +284,32 @@ export function runTui(options: ChatOptions): Promise<void> {
       chalk.gray('  anything else      run it as a task through the gated agent loop'),
     ];
 
+    const listModelsToTranscript = (query?: string): void => {
+      const models = listModels({
+        ...(activeProvider ? { provider: activeProvider } : {}),
+        ...(query ? { query } : {}),
+        coreCompatibleOnly: true,
+        limit: 30,
+      });
+      if (models.length === 0) {
+        transcript.append(chalk.yellow('No core-compatible models match.'));
+        tui.requestRender();
+        return;
+      }
+      transcript.append(chalk.gray(`${models.length} model(s):`));
+      for (const m of models) {
+        transcript.append(
+          chalk.gray(
+            `  ${m.provider.padEnd(12)} ${m.id}  ctx ${compactTokens(m.contextWindow)}  max ${compactTokens(m.maxTokens)}${m.reasoning ? '  reasoning' : ''}`,
+          ),
+        );
+      }
+      tui.requestRender();
+    };
+
     async function switchModel(id: string): Promise<void> {
       if (!id) {
-        transcript.append(chalk.yellow('Usage: /model <model-id>'));
+        transcript.append(chalk.yellow('Usage: /model <model-id> — or type /model <partial> to get a dropdown.'));
         tui.requestRender();
         return;
       }
@@ -319,8 +320,10 @@ export function runTui(options: ChatOptions): Promise<void> {
       }
       const next = selectModel({ model: id, ...(activeProvider ? { provider: activeProvider } : {}) });
       if (!next) {
-        transcript.append(chalk.yellow(`No exact model "${id}" — opening the picker with close matches instead.`));
-        openModels(id);
+        transcript.append(
+          chalk.yellow(`No exact model "${id}" — type /model <partial> to see close matches, or /models to list.`),
+        );
+        tui.requestRender();
         return;
       }
       busy = true;
@@ -355,9 +358,7 @@ export function runTui(options: ChatOptions): Promise<void> {
     async function setThinking(line: string): Promise<void> {
       const arg = line.slice('/thinking '.length).trim();
       if (arg === '') {
-        transcript.append(
-          chalk.gray(`Thinking: ${options.thinkingLevel ?? 'off'} (levels: ${THINKING_LEVELS.join('|')})`),
-        );
+        transcript.append(chalk.gray(`Thinking: ${options.thinkingLevel ?? 'off'} (levels: ${THINKING_LEVELS.join('|')})`));
         tui.requestRender();
         return;
       }
@@ -396,9 +397,7 @@ export function runTui(options: ChatOptions): Promise<void> {
         transcript.append(chalk.gray(`Verification level set to ${level}.`));
         refreshStatus();
       } else {
-        transcript.append(
-          chalk.yellow('Usage: /verify <level 0-5> (level 6 formal verification is unsupported)'),
-        );
+        transcript.append(chalk.yellow('Usage: /verify <level 0-5> (level 6 formal verification is unsupported)'));
       }
       tui.requestRender();
     }
@@ -408,16 +407,14 @@ export function runTui(options: ChatOptions): Promise<void> {
       if (!id) {
         const providers = listProviders();
         const compatible = providers.filter((p) => p.coreCompatibleCount > 0).length;
-        transcript.append(
-          chalk.gray(`${providers.length} providers — ${compatible} serve OpenAI-compatible models (usable by the core runtime):`),
-        );
+        transcript.append(chalk.gray(`${providers.length} providers — ${compatible} serve OpenAI-compatible models:`));
         for (const p of providers) {
           const tag = p.coreCompatibleCount > 0 ? 'core' : 'native';
           transcript.append(
             chalk.gray(`  ${p.id.padEnd(24)} ${p.name.padEnd(22)} ${String(p.modelCount).padStart(4)} models  [${tag}]`),
           );
         }
-        transcript.append(chalk.gray('  Use /provider <id> to filter, then /models to browse.'));
+        transcript.append(chalk.gray('  Use /provider <id> to filter, then /model to browse.'));
       } else {
         const provider = listProviders().find((p) => p.id === id);
         if (!provider) {
@@ -510,7 +507,8 @@ export function runTui(options: ChatOptions): Promise<void> {
 
     async function submitLine(raw: string): Promise<void> {
       const line = raw.trim();
-      input.setValue('');
+      editor.setText('');
+      editor.addToHistory(raw);
       tui.requestRender();
       if (!line) return;
       if (line === '/exit' || line === '/quit') {
@@ -523,7 +521,7 @@ export function runTui(options: ChatOptions): Promise<void> {
         return;
       }
       if (line === '/models' || line.startsWith('/models ')) {
-        openModels(line.slice('/models '.length).trim() || undefined);
+        listModelsToTranscript(line.slice('/models '.length).trim() || undefined);
         return;
       }
       if (line === '/provider' || line.startsWith('/provider ')) {
@@ -531,7 +529,8 @@ export function runTui(options: ChatOptions): Promise<void> {
         return;
       }
       if (line === '/model') {
-        openModels();
+        transcript.append(chalk.yellow('Usage: /model <model-id> — or type /model <partial> to get a dropdown.'));
+        tui.requestRender();
         return;
       }
       if (line.startsWith('/model ')) {
@@ -574,7 +573,7 @@ export function runTui(options: ChatOptions): Promise<void> {
       await runTaskTurn(line);
     }
 
-    input.onSubmit = (value: string) => {
+    editor.onSubmit = (value: string) => {
       void submitLine(value);
     };
 
