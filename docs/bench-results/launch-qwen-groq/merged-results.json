@@ -1,0 +1,646 @@
+{
+  "generatedAt": "2026-08-16T19:58:28.312Z",
+  "model": "qwen/qwen3.6-27b",
+  "provider": "groq (free, 3 keys — merged)",
+  "configs": [
+    "guppy-core"
+  ],
+  "maxAttempts": 3,
+  "note": "Merged from 3 Groq free keys (200k tokens/day each). Final: 20/20. Required a fixture fix — refactor-rename-groupby/pluck finalCheck matched the non-generic signature, but indexBy/pickField are generic (<T>).",
+  "passed": 20,
+  "total": 20,
+  "results": [
+    {
+      "config": "guppy-core",
+      "taskId": "bugfix-clamp",
+      "kind": "bugfix",
+      "wallTimeMs": 135702,
+      "tokensTotal": 21579,
+      "toolCalls": 6,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\.guppy\\bench\\launch-qwen-groq\\fixtures\\guppy-core\\bugfix-clamp",
+      "passed": true,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 74881,
+          "tokens": 13156,
+          "toolCalls": 4,
+          "verified": false,
+          "errorSummary": "  'test: '"
+        },
+        {
+          "attempt": 2,
+          "wallTimeMs": 60604,
+          "tokens": 8423,
+          "toolCalls": 2,
+          "verified": true
+        }
+      ],
+      "contextHealth": {
+        "files": 8,
+        "scoreMin": 69,
+        "scoreMax": 89,
+        "scoreAvg": 78.1,
+        "ciStatus": "WARN",
+        "totalTokens": 22902,
+        "wastedTokens": 78,
+        "tokensSaved": 78,
+        "tool": "contextops@0.1.0"
+      }
+    },
+    {
+      "config": "guppy-core",
+      "taskId": "bugfix-sum",
+      "kind": "bugfix",
+      "wallTimeMs": 97402,
+      "tokensTotal": 12948,
+      "toolCalls": 4,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\.guppy\\bench\\launch-qwen-groq\\fixtures\\guppy-core\\bugfix-sum",
+      "passed": true,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 97281,
+          "tokens": 12948,
+          "toolCalls": 4,
+          "verified": true
+        }
+      ],
+      "contextHealth": {
+        "files": 5,
+        "scoreMin": 74,
+        "scoreMax": 90,
+        "scoreAvg": 85.8,
+        "ciStatus": "WARN",
+        "totalTokens": 12840,
+        "wastedTokens": 46,
+        "tokensSaved": 47,
+        "tool": "contextops@0.1.0"
+      }
+    },
+    {
+      "config": "guppy-core",
+      "taskId": "bugfix-average",
+      "kind": "bugfix",
+      "wallTimeMs": 66813,
+      "tokensTotal": 12698,
+      "toolCalls": 3,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\.guppy\\bench\\launch-qwen-groq\\fixtures\\guppy-core\\bugfix-average",
+      "passed": true,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 66708,
+          "tokens": 12698,
+          "toolCalls": 3,
+          "verified": true
+        }
+      ],
+      "contextHealth": {
+        "files": 4,
+        "scoreMin": 72,
+        "scoreMax": 85,
+        "scoreAvg": 80.5,
+        "ciStatus": "WARN",
+        "totalTokens": 9612,
+        "wastedTokens": 39,
+        "tokensSaved": 39,
+        "tool": "contextops@0.1.0"
+      }
+    },
+    {
+      "config": "guppy-core",
+      "taskId": "bugfix-median",
+      "kind": "bugfix",
+      "wallTimeMs": 93162,
+      "tokensTotal": 12677,
+      "toolCalls": 3,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\.guppy\\bench\\launch-qwen-groq\\fixtures\\guppy-core\\bugfix-median",
+      "passed": true,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 93054,
+          "tokens": 12677,
+          "toolCalls": 3,
+          "verified": true
+        }
+      ],
+      "contextHealth": {
+        "files": 4,
+        "scoreMin": 72,
+        "scoreMax": 85,
+        "scoreAvg": 80.8,
+        "ciStatus": "WARN",
+        "totalTokens": 9609,
+        "wastedTokens": 39,
+        "tokensSaved": 39,
+        "tool": "contextops@0.1.0"
+      }
+    },
+    {
+      "config": "guppy-core",
+      "taskId": "bugfix-roundto",
+      "kind": "bugfix",
+      "wallTimeMs": 110863,
+      "tokensTotal": 14736,
+      "toolCalls": 3,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\.guppy\\bench\\launch-qwen-groq\\fixtures\\guppy-core\\bugfix-roundto",
+      "passed": true,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 110770,
+          "tokens": 14736,
+          "toolCalls": 3,
+          "verified": true
+        }
+      ],
+      "contextHealth": {
+        "files": 4,
+        "scoreMin": 69,
+        "scoreMax": 81,
+        "scoreAvg": 77,
+        "ciStatus": "WARN",
+        "totalTokens": 11412,
+        "wastedTokens": 39,
+        "tokensSaved": 39,
+        "tool": "contextops@0.1.0"
+      }
+    },
+    {
+      "config": "guppy-core",
+      "taskId": "bugfix-slugify",
+      "kind": "bugfix",
+      "wallTimeMs": 117058,
+      "tokensTotal": 15497,
+      "toolCalls": 4,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\.guppy\\bench\\launch-qwen-groq\\fixtures\\guppy-core\\bugfix-slugify",
+      "passed": true,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 116976,
+          "tokens": 15497,
+          "toolCalls": 4,
+          "verified": true
+        }
+      ],
+      "contextHealth": {
+        "files": 5,
+        "scoreMin": 74,
+        "scoreMax": 89,
+        "scoreAvg": 84,
+        "ciStatus": "WARN",
+        "totalTokens": 11471,
+        "wastedTokens": 46,
+        "tokensSaved": 46,
+        "tool": "contextops@0.1.0"
+      }
+    },
+    {
+      "config": "guppy-core",
+      "taskId": "bugfix-truncate",
+      "kind": "bugfix",
+      "wallTimeMs": 60645,
+      "tokensTotal": 15427,
+      "toolCalls": 4,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\.guppy\\bench\\launch-qwen-groq-2\\fixtures\\guppy-core\\bugfix-truncate",
+      "passed": true,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 60510,
+          "tokens": 15427,
+          "toolCalls": 4,
+          "verified": true
+        }
+      ],
+      "contextHealth": {
+        "files": 5,
+        "scoreMin": 74,
+        "scoreMax": 89,
+        "scoreAvg": 84.2,
+        "ciStatus": "WARN",
+        "totalTokens": 11639,
+        "wastedTokens": 46,
+        "tokensSaved": 46,
+        "tool": "contextops@0.1.0"
+      }
+    },
+    {
+      "config": "guppy-core",
+      "taskId": "bugfix-is-palindrome",
+      "kind": "bugfix",
+      "wallTimeMs": 118227,
+      "tokensTotal": 15337,
+      "toolCalls": 4,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\.guppy\\bench\\launch-qwen-groq\\fixtures\\guppy-core\\bugfix-is-palindrome",
+      "passed": true,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 118115,
+          "tokens": 15337,
+          "toolCalls": 4,
+          "verified": true
+        }
+      ],
+      "contextHealth": {
+        "files": 5,
+        "scoreMin": 74,
+        "scoreMax": 89,
+        "scoreAvg": 84.2,
+        "ciStatus": "WARN",
+        "totalTokens": 11539,
+        "wastedTokens": 46,
+        "tokensSaved": 46,
+        "tool": "contextops@0.1.0"
+      }
+    },
+    {
+      "config": "guppy-core",
+      "taskId": "bugfix-groupby",
+      "kind": "bugfix",
+      "wallTimeMs": 97421,
+      "tokensTotal": 12978,
+      "toolCalls": 3,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\.guppy\\bench\\launch-qwen-groq\\fixtures\\guppy-core\\bugfix-groupby",
+      "passed": true,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 97316,
+          "tokens": 12978,
+          "toolCalls": 3,
+          "verified": true
+        }
+      ],
+      "contextHealth": {
+        "files": 4,
+        "scoreMin": 72,
+        "scoreMax": 85,
+        "scoreAvg": 80.5,
+        "ciStatus": "WARN",
+        "totalTokens": 9965,
+        "wastedTokens": 39,
+        "tokensSaved": 41,
+        "tool": "contextops@0.1.0"
+      }
+    },
+    {
+      "config": "guppy-core",
+      "taskId": "bugfix-chunk",
+      "kind": "bugfix",
+      "wallTimeMs": 118754,
+      "tokensTotal": 16034,
+      "toolCalls": 4,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\.guppy\\bench\\launch-qwen-groq\\fixtures\\guppy-core\\bugfix-chunk",
+      "passed": true,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 118632,
+          "tokens": 16034,
+          "toolCalls": 4,
+          "verified": true
+        }
+      ],
+      "contextHealth": {
+        "files": 5,
+        "scoreMin": 74,
+        "scoreMax": 89,
+        "scoreAvg": 84.4,
+        "ciStatus": "WARN",
+        "totalTokens": 12078,
+        "wastedTokens": 46,
+        "tokensSaved": 48,
+        "tool": "contextops@0.1.0"
+      }
+    },
+    {
+      "config": "guppy-core",
+      "taskId": "testadd-math-utils",
+      "kind": "test-add",
+      "wallTimeMs": 85191,
+      "tokensTotal": 10934,
+      "toolCalls": 3,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\.guppy\\bench\\launch-qwen-groq\\fixtures\\guppy-core\\testadd-math-utils",
+      "passed": true,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 85040,
+          "tokens": 10934,
+          "toolCalls": 3,
+          "verified": true
+        }
+      ],
+      "contextHealth": {
+        "files": 4,
+        "scoreMin": 76,
+        "scoreMax": 90,
+        "scoreAvg": 83.3,
+        "ciStatus": "WARN",
+        "totalTokens": 8179,
+        "wastedTokens": 28,
+        "tokensSaved": 30,
+        "tool": "contextops@0.1.0"
+      }
+    },
+    {
+      "config": "guppy-core",
+      "taskId": "testadd-median-roundto",
+      "kind": "test-add",
+      "wallTimeMs": 61313,
+      "tokensTotal": 8505,
+      "toolCalls": 2,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\.guppy\\bench\\launch-qwen-groq\\fixtures\\guppy-core\\testadd-median-roundto",
+      "passed": true,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 61220,
+          "tokens": 8505,
+          "toolCalls": 2,
+          "verified": true
+        }
+      ],
+      "contextHealth": {
+        "files": 3,
+        "scoreMin": 74,
+        "scoreMax": 84,
+        "scoreAvg": 79.3,
+        "ciStatus": "WARN",
+        "totalTokens": 6198,
+        "wastedTokens": 21,
+        "tokensSaved": 20,
+        "tool": "contextops@0.1.0"
+      }
+    },
+    {
+      "config": "guppy-core",
+      "taskId": "testadd-string-utils",
+      "kind": "test-add",
+      "wallTimeMs": 201531,
+      "tokensTotal": 26750,
+      "toolCalls": 5,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\.guppy\\bench\\launch-qwen-groq-2\\fixtures\\guppy-core\\testadd-string-utils",
+      "passed": true,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 14314,
+          "tokens": 2261,
+          "toolCalls": 0,
+          "verified": false,
+          "errorSummary": "\n> test\n> node --test test/*.test.ts\n\n✔ groupBy groups items by key (1.7459ms)\n✔ uniqueBy keeps the first item per key (0.184ms)\n✔ chunk splits arrays into groups (0.1441ms)\n✔ pluck extracts a field from every item (0.1204ms)\n✔ clamp keeps values inside the range (1.3209ms)\n✔ sum adds all values (0."
+        },
+        {
+          "attempt": 2,
+          "wallTimeMs": 122872,
+          "tokens": 11732,
+          "toolCalls": 3,
+          "verified": false,
+          "errorSummary": "\n> test\n> node --test test/*.test.ts\n\n✔ groupBy groups items by key (2.681ms)\n✔ uniqueBy keeps the first item per key (0.5638ms)\n✔ chunk splits arrays into groups (0.3472ms)\n✔ pluck extracts a field from every item (0.2738ms)\n✔ clamp keeps values inside the range (2.8768ms)\n✔ sum adds all values (0."
+        },
+        {
+          "attempt": 3,
+          "wallTimeMs": 64186,
+          "tokens": 12757,
+          "toolCalls": 2,
+          "verified": true
+        }
+      ],
+      "contextHealth": {
+        "files": 8,
+        "scoreMin": 68,
+        "scoreMax": 83,
+        "scoreAvg": 74.6,
+        "ciStatus": "WARN",
+        "totalTokens": 24151,
+        "wastedTokens": 56,
+        "tokensSaved": 53,
+        "tool": "contextops@0.1.0"
+      }
+    },
+    {
+      "config": "guppy-core",
+      "taskId": "testadd-palindrome-capitalize",
+      "kind": "test-add",
+      "wallTimeMs": 220708,
+      "tokensTotal": 30003,
+      "toolCalls": 7,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\.guppy\\bench\\launch-qwen-groq-2\\fixtures\\guppy-core\\testadd-palindrome-capitalize",
+      "passed": true,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 220572,
+          "tokens": 30003,
+          "toolCalls": 7,
+          "verified": true
+        }
+      ],
+      "contextHealth": {
+        "files": 8,
+        "scoreMin": 74,
+        "scoreMax": 90,
+        "scoreAvg": 84.6,
+        "ciStatus": "WARN",
+        "totalTokens": 23265,
+        "wastedTokens": 336,
+        "tokensSaved": 333,
+        "tool": "contextops@0.1.0"
+      }
+    },
+    {
+      "config": "guppy-core",
+      "taskId": "testadd-collections",
+      "kind": "test-add",
+      "wallTimeMs": 155596,
+      "tokensTotal": 20164,
+      "toolCalls": 4,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\.guppy\\bench\\launch-qwen-groq-2\\fixtures\\guppy-core\\testadd-collections",
+      "passed": true,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 35759,
+          "tokens": 4449,
+          "toolCalls": 1,
+          "verified": false,
+          "errorSummary": "\n> test\n> node --test test/*.test.ts\n\n✖ TODO: test suite not written yet (1.9077ms)\n✔ clamp keeps values inside the range (0.5616ms)\n✔ sum adds all values (0.151ms)\n✔ average computes the mean (0.4034ms)\n✔ median finds the middle value (0.1144ms)\n✔ roundTo rounds to decimal places (0.4952ms)\n✔ slugi"
+        },
+        {
+          "attempt": 2,
+          "wallTimeMs": 119724,
+          "tokens": 15715,
+          "toolCalls": 3,
+          "verified": true
+        }
+      ],
+      "contextHealth": {
+        "files": 6,
+        "scoreMin": 69,
+        "scoreMax": 83,
+        "scoreAvg": 77,
+        "ciStatus": "WARN",
+        "totalTokens": 15683,
+        "wastedTokens": 42,
+        "tokensSaved": 43,
+        "tool": "contextops@0.1.0"
+      }
+    },
+    {
+      "config": "guppy-core",
+      "taskId": "refactor-rename-clamp",
+      "kind": "refactor",
+      "wallTimeMs": 262998,
+      "tokensTotal": 35496,
+      "toolCalls": 8,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\.guppy\\bench\\launch-qwen-groq-2\\fixtures\\guppy-core\\refactor-rename-clamp",
+      "passed": true,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 262877,
+          "tokens": 35496,
+          "toolCalls": 8,
+          "verified": true
+        }
+      ],
+      "contextHealth": {
+        "files": 9,
+        "scoreMin": 70,
+        "scoreMax": 87,
+        "scoreAvg": 81.2,
+        "ciStatus": "WARN",
+        "totalTokens": 27834,
+        "wastedTokens": 66,
+        "tokensSaved": 64,
+        "tool": "contextops@0.1.0"
+      }
+    },
+    {
+      "config": "guppy-core",
+      "taskId": "refactor-rename-average",
+      "kind": "refactor",
+      "wallTimeMs": 224462,
+      "tokensTotal": 29852,
+      "toolCalls": 7,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\.guppy\\bench\\launch-qwen-groq-2\\fixtures\\guppy-core\\refactor-rename-average",
+      "passed": true,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 224290,
+          "tokens": 29852,
+          "toolCalls": 7,
+          "verified": true
+        }
+      ],
+      "contextHealth": {
+        "files": 8,
+        "scoreMin": 70,
+        "scoreMax": 87,
+        "scoreAvg": 79.3,
+        "ciStatus": "WARN",
+        "totalTokens": 23065,
+        "wastedTokens": 56,
+        "tokensSaved": 56,
+        "tool": "contextops@0.1.0"
+      }
+    },
+    {
+      "config": "guppy-core",
+      "taskId": "refactor-rename-slugify",
+      "kind": "refactor",
+      "wallTimeMs": 126135,
+      "tokensTotal": 16832,
+      "toolCalls": 4,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\.guppy\\bench\\launch-qwen-groq-2\\fixtures\\guppy-core\\refactor-rename-slugify",
+      "passed": true,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 126037,
+          "tokens": 16832,
+          "toolCalls": 4,
+          "verified": true
+        }
+      ],
+      "contextHealth": {
+        "files": 5,
+        "scoreMin": 70,
+        "scoreMax": 82,
+        "scoreAvg": 76,
+        "ciStatus": "WARN",
+        "totalTokens": 13036,
+        "wastedTokens": 35,
+        "tokensSaved": 34,
+        "tool": "contextops@0.1.0"
+      }
+    },
+    {
+      "config": "guppy-core",
+      "taskId": "refactor-rename-groupby",
+      "kind": "refactor",
+      "wallTimeMs": 46832,
+      "tokensTotal": 9928,
+      "toolCalls": 3,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\.guppy\\bench\\launch-qwen-groq-3b\\fixtures\\guppy-core\\refactor-rename-groupby",
+      "passed": true,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 46643,
+          "tokens": 9928,
+          "toolCalls": 3,
+          "verified": true
+        }
+      ],
+      "contextHealth": {
+        "files": 4,
+        "scoreMin": 70,
+        "scoreMax": 82,
+        "scoreAvg": 76.3,
+        "ciStatus": "WARN",
+        "totalTokens": 10639,
+        "wastedTokens": 28,
+        "tokensSaved": 26,
+        "tool": "contextops@0.1.0"
+      }
+    },
+    {
+      "config": "guppy-core",
+      "taskId": "refactor-rename-pluck",
+      "kind": "refactor",
+      "wallTimeMs": 74259,
+      "tokensTotal": 13490,
+      "toolCalls": 3,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\.guppy\\bench\\launch-qwen-groq-3b\\fixtures\\guppy-core\\refactor-rename-pluck",
+      "passed": true,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 74139,
+          "tokens": 13490,
+          "toolCalls": 3,
+          "verified": true
+        }
+      ],
+      "contextHealth": {
+        "files": 4,
+        "scoreMin": 70,
+        "scoreMax": 80,
+        "scoreAvg": 74.8,
+        "ciStatus": "WARN",
+        "totalTokens": 10080,
+        "wastedTokens": 28,
+        "tokensSaved": 28,
+        "tool": "contextops@0.1.0"
+      }
+    }
+  ]
+}

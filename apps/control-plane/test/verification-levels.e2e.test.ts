@@ -134,10 +134,12 @@ process.exit(1);
     '@ECHO off\r\nnode "%~dp0\\..\\eslint\\bin\\eslint.cjs" %*\r\n',
     'utf8',
   );
+  // POSIX needs the executable bit on the shim (npm exec spawns it directly);
+  // on Windows the .cmd shim above is used and the mode is irrelevant.
   writeFileSync(
     join(dir, 'node_modules', '.bin', 'eslint'),
     '#!/usr/bin/env node\nrequire(\'../eslint/bin/eslint.cjs\');\n',
-    'utf8',
+    { encoding: 'utf8', mode: 0o755 },
   );
 }
 
@@ -356,6 +358,9 @@ async function collectEvents(taskId: string, eventStore: ReturnType<typeof creat
 // ---------------------------------------------------------------------------
 
 describe('verification levels 2/4/5 through the real gate', () => {
+  // These gates spawn real npm exec/npm run processes per attempt; under
+  // parallel suite load on Windows that can exceed vitest's 30s default, so
+  // give each a generous explicit timeout.
   it('level 2 (lint): gates on an eslint violation and records LintFailed', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'guppy-lint-e2e-'));
     tmpDirs.push(dir);
@@ -375,7 +380,7 @@ describe('verification levels 2/4/5 through the real gate', () => {
     expect(events.some((e) => e.type === 'LintPassed')).toBe(true);
 
     await eventStore.close();
-  });
+  }, 90_000);
 
   it('level 4 (property): gates on the property test before the fix lands', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'guppy-property-e2e-'));
@@ -398,7 +403,7 @@ describe('verification levels 2/4/5 through the real gate', () => {
     expect(propertyFailure).toBeDefined();
 
     await eventStore.close();
-  });
+  }, 90_000);
 
   it('level 5 (integration): gates on the integration test before the fix lands', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'guppy-integration-e2e-'));
@@ -421,5 +426,5 @@ describe('verification levels 2/4/5 through the real gate', () => {
     expect(integrationFailure).toBeDefined();
 
     await eventStore.close();
-  });
+  }, 90_000);
 });

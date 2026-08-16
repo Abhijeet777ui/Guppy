@@ -114,6 +114,8 @@ export interface BenchOptions {
   retryMaxDelayMs?: number;
   /** Per-request timeout in ms for the guppy-core runtime. */
   modelTimeoutMs?: number;
+  /** Client-side rate limit (requests/minute) for the guppy-core runtime. */
+  requestsPerMinute?: number;
   /** Run prime-agent inside this WSL2 distro. */
   wslDistro?: string;
   /** Override the prime-agent binary name/path. */
@@ -187,6 +189,9 @@ export function coreModelConfig(options: BenchOptions): ModelConfig {
     ...(options.retryBaseDelayMs !== undefined ? { retryBaseDelayMs: options.retryBaseDelayMs } : {}),
     ...(options.retryMaxDelayMs !== undefined ? { retryMaxDelayMs: options.retryMaxDelayMs } : {}),
     ...(options.modelTimeoutMs !== undefined ? { timeoutMs: options.modelTimeoutMs } : {}),
+    ...(options.requestsPerMinute !== undefined
+      ? { requestsPerMinute: options.requestsPerMinute }
+      : {}),
   };
 }
 

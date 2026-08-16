@@ -585,7 +585,7 @@ export const BENCH_TASKS: BenchTaskSpec[] = [
       return (
         src !== null &&
         tests !== null &&
-        src.includes('export function indexBy(') &&
+        src.includes('export function indexBy<T>(') &&
         tests.includes('indexBy(') &&
         !tests.includes('groupBy(')
       );
@@ -609,7 +609,7 @@ export const BENCH_TASKS: BenchTaskSpec[] = [
       return (
         src !== null &&
         tests !== null &&
-        src.includes('export function pickField(') &&
+        src.includes('export function pickField<T') &&
         tests.includes('pickField(') &&
         !tests.includes('pluck(')
       );

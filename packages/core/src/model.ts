@@ -33,6 +33,13 @@ export interface ModelConfig {
    * 120_000; a timed-out request is retried like a network error.
    */
   timeoutMs?: number;
+  /**
+   * Client-side rate limit: max requests per minute against this endpoint.
+   * When set, the client paces requests (across all client instances for the
+   * same provider + base URL) under a 60-second sliding window, so free-tier
+   * RPM caps are respected instead of tripped. Unset (or 0) disables pacing.
+   */
+  requestsPerMinute?: number;
 }
 
 /**

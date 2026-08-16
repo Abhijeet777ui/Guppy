@@ -18,6 +18,7 @@ export type {
 } from './openai-client.js';
 export {
   OpenAIChatClient,
+  RateLimiter,
   DEFAULT_MAX_RETRIES,
   DEFAULT_RETRY_BASE_DELAY_MS,
   DEFAULT_RETRY_MAX_DELAY_MS,

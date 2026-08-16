@@ -48,6 +48,49 @@ interface OpenAIToolCallResponse {
   function: { name: string; arguments: string };
 }
 
+const RATE_LIMIT_WINDOW_MS = 60_000;
+
+/**
+ * Sliding-window rate limiter, shared across every client instance in the
+ * process. The bench constructs a fresh `OpenAIChatClient` per task, so a
+ * per-instance limiter would reset its state on every task and never throttle;
+ * keying by `provider | baseUrl` makes the limit hold across the whole run.
+ */
+export class RateLimiter {
+  private readonly buckets = new Map<string, number[]>();
+
+  /**
+   * Block until a request slot is available under a fixed 60-second window of
+   * at most `rpm` requests. Returns immediately when `rpm` is unset/zero.
+   */
+  async acquire(key: string, rpm: number | undefined): Promise<void> {
+    if (!rpm || rpm <= 0) return;
+
+    let window = this.buckets.get(key);
+    if (!window) {
+      window = [];
+      this.buckets.set(key, window);
+    }
+
+    for (;;) {
+      const nowMs = Date.now();
+      const cutoff = nowMs - RATE_LIMIT_WINDOW_MS;
+      while (window.length > 0 && (window[0] ?? 0) <= cutoff) window.shift();
+      if (window.length < rpm) {
+        window.push(nowMs);
+        return;
+      }
+      // The oldest request leaves the window at `oldest + WINDOW`; wait for it
+      // to expire (plus a hair of margin) before re-checking.
+      const oldest = window[0] ?? nowMs;
+      await sleep(Math.max(0, oldest + RATE_LIMIT_WINDOW_MS - nowMs + 1));
+    }
+  }
+}
+
+/** Process-wide limiter so pacing survives the bench's per-task clients. */
+const sharedRateLimiter = new RateLimiter();
+
 export class OpenAIChatClient {
   private readonly config: ModelConfig;
 
@@ -264,8 +307,13 @@ export class OpenAIChatClient {
     const baseDelayMs = this.config.retryBaseDelayMs ?? DEFAULT_RETRY_BASE_DELAY_MS;
     const maxDelayMs = this.config.retryMaxDelayMs ?? DEFAULT_RETRY_MAX_DELAY_MS;
     const timeoutMs = this.config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    const rateLimitKey = `${this.config.provider}|${resolveBaseUrl(this.config)}`;
 
     for (let attempt = 0; ; attempt++) {
+      // Every HTTP request — including retries — counts against the provider's
+      // rate limit, so pace before each fetch rather than once per call.
+      await sharedRateLimiter.acquire(rateLimitKey, this.config.requestsPerMinute);
+
       let response: Response;
       // Bound every attempt so a hung endpoint (accepts the connection but
       // never sends headers) can't stall an unattended run forever. A timeout
