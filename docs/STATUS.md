@@ -31,7 +31,7 @@ Every claim below was checked against the current tree, not memory:
   - `nvidia/nemotron-3-super-120b-a12b:free` via OpenRouter (real API key) — **6/6 fixtures PASS in one attempt each** (bugfix-clamp/sum/average, testadd-math-utils/collections, refactor-rename-clamp; 214,773 tokens, 45 tool calls).
   - `llama-3.3-70b-versatile` via Groq free — `bugfix-clamp` PASS after the `<function/name>` text-tool-call parser fix; 100k TPD cap exhausted same day (a fixture run needs ~100k tokens).
   - `gemini-2.5-flash` via Google AI Studio free — 2/2 smoke (`bugfix-clamp` + `bugfix-sum`) PASS; a later **full 20-fixture run scored 4/20**, but 16 of those misses recorded 0 tokens / 0 tool calls because the model client threw and the error was silently masked as a gate failure — see §7 #13 (fixed).
-  - `qwen/qwen3.6-27b` via Groq free (2026-08-16) — **11/20 fixtures PASS** (55%; the 11 passes in 1-2 attempts, 174,575 tokens, 46 tool calls). Cut short by Groq's **200k tokens/day** free cap: 8 fixtures quota-blocked (5 never started, 3 partial), 1 genuine fail (`bugfix-truncate` — the model emitted a non-standard `<parameter=…>` tool-call format Groq rejected with a 400). Evidence: `docs/bench-results/launch-qwen-groq/`.
+  - `qwen/qwen3.6-27b` via Groq free (2026-08-16, two keys) — **18/20 fixtures PASS** (90%). Each Groq free key caps at **200k tokens/day**, so a full pass needed two keys; the last two remain (`refactor-rename-groupby` — gate passed but the acceptance check failed on attempt 1, retries quota-cut; `refactor-rename-pluck` — quota, never ran) and await a token-window reset. Evidence: `docs/bench-results/launch-qwen-groq/merged-results.json`.
 
 ---
 
