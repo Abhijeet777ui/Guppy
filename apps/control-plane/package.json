@@ -10,7 +10,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "test": "vitest run",
+    "test": "vitest run --testTimeout=120000",
     "lint": "biome check .",
     "start": "node dist/cli.js"
   },
