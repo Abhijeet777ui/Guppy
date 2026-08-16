@@ -11,7 +11,7 @@
 Every claim below was checked against the current tree, not memory:
 
 - **Build:** `pnpm -r run build` — green across all 11 workspace projects.
-- **Tests:** `pnpm -r run test` (root `pnpm test`) — green end-to-end; 111 tests across 8 suites (the three no-suite packages — contracts, event-store, memory — pass via `--passWithNoTests`):
+- **Tests:** `pnpm -r run test` (root `pnpm test`) — green end-to-end; 135 tests across 10 suites (only `contracts` passes via `--passWithNoTests`):
 
   | Suite | Tests | Covers |
   |---|---|---|
@@ -19,6 +19,8 @@ Every claim below was checked against the current tree, not memory:
   | `@guppy/workspace` | 7 | unified-diff parser + fuzzy hunk applier, symlink path containment |
   | `@guppy/agent-runtime` | 3 | prime-agent spawn → JSONL framing → parse → events E2E; non-zero exit; missing binary |
   | `@guppy/verification-engine` | 9 | level commands, output parsers (incl. real-eslint stylish), escalation |
+  | `@guppy/event-store` | 11 | append/replay roundtrip + enrichment, replay `fromIndex`/filter, durability across close/reopen, session auto-begin + finalization (unknown on switch, real outcome on `TrajectoryCompleted`), trajectory metrics, live subscribe + throwing-listener isolation, checkpoints, SQLite index queries + task deletion |
+  | `@guppy/memory` | 13 | record/count/clear, persistence across instances, corrupt-line tolerance, tag/type/taskId/limit retrieval + recency decay, `retrieveForFailure`, `ingestTrajectory`, `extractFixes` (failure→change→pass, unresolved, typecheck, over-attribution) |
   | `@guppy/sleep-cycle` | 6 | failure clustering, fix extraction, memory re-ingest |
   | `@guppy/context-engine` | 8 | skills loader/producer/selection |
   | `@guppy/control-plane` | 31 | full standalone loop, resume, checkpoint, live-stream, chat (incl. mid-turn-exit), worktree merge-back, skills E2E, verification levels 2/4/5 E2E, container-mode E2E (skipped without Docker) |
