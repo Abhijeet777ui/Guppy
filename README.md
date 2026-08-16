@@ -49,4 +49,4 @@ docs/       status, capabilities, launch checklist, audit insights, recorded ben
 
 The learn → act → verify → remember loop is **proven on free tiers**: a clean full-suite run scored **20/20 fixtures passing** on `qwen/qwen3.6-27b` (Groq free — three keys, since each free key caps at 200k tokens/day). Merged evidence: [`docs/bench-results/launch-qwen-groq/merged-results.json`](docs/bench-results/launch-qwen-groq/merged-results.json). Earlier proof: nemotron-3-super-120b (OpenRouter free) 6/6 in one attempt each. See `docs/STATUS.md` for the full verified status and bug log.
 
-No license is attached yet.
+Licensed under the Apache License, Version 2.0 — see [`LICENSE`](LICENSE).

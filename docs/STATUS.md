@@ -32,6 +32,7 @@ Every claim below was checked against the current tree, not memory:
   - `llama-3.3-70b-versatile` via Groq free — `bugfix-clamp` PASS after the `<function/name>` text-tool-call parser fix; 100k TPD cap exhausted same day (a fixture run needs ~100k tokens).
   - `gemini-2.5-flash` via Google AI Studio free — 2/2 smoke (`bugfix-clamp` + `bugfix-sum`) PASS; a later **full 20-fixture run scored 4/20**, but 16 of those misses recorded 0 tokens / 0 tool calls because the model client threw and the error was silently masked as a gate failure — see §7 #13 (fixed).
   - `qwen/qwen3.6-27b` via Groq free (2026-08-16, three keys) — **20/20 fixtures PASS (100%)**. Each Groq free key caps at **200k tokens/day** (TPD), so the full pass needed three keys. Surfaced and fixed a real fixture bug: `refactor-rename-groupby`/`pluck` `finalCheck` matched the non-generic `export function X(` signature, but `indexBy<T>`/`pickField<T, K…>` are generic — the check could never pass; fixed + regression-tested. Evidence: `docs/bench-results/launch-qwen-groq/merged-results.json`.
+  - **Live product recordings (2026-08-16)** — real `guppy run` (bugfix-clamp: gate red → agent fixes → gate green → merge-back, 39s, 12.6k tokens) and `guppy chat` (tool-backed Q&A, all gates green) on qwen3.6-27b; transcripts in `docs/live/`.
 
 ---
 
