@@ -85,3 +85,32 @@ the user sees it, plus a visual sign-off by the user on a real terminal.
 
 Track C items are pulled in as dependencies of the milestone that needs them.
 Every step lands on `feature/nexus` with tests green and `main` untouched.
+
+---
+
+## Next session — UX design + command/flag inventory (before M1 code)
+
+A first-time user cannot be expected to know the slash commands or CLI flags.
+Before building M1's UI, design the experience end-to-end and enumerate every
+surface:
+
+- **The first-run experience, step by step** — what a brand-new user sees and
+  does from `pnpm cli -- chat` to their first successful task (no-key
+  detection, guided setup, hints, welcome/help screens).
+- **Complete command inventory** — every slash command (`/help`, `/models`,
+  `/model`, `/provider`, `/thinking`, `/verify`, `/verbose`, `/setup`,
+  `/exit`…) with purpose, arguments, and autocomplete behavior; decide which
+  belong in the visible help vs. advanced.
+- **Complete flag inventory** — every CLI flag on `run` / `chat` /
+  `benchmark` / `models` / `config` / `setup` (`--model`, `--provider`,
+  `--tui/--no-tui`, `--local`, `--keep-worktree`, `--no-commit`, `--force`,
+  `--thinking`, `--verify`, `--rpm`, …) with defaults; find the 80/20 a new
+  user needs vs. power-user.
+- **Discoverability rules** — each command/flag must be reachable from the
+  UI (help screen, `/` menu, hints) and each dead-end (e.g. no key, no
+  exact model) must redirect to the fix.
+- **Wireframes / flow** — sketch the chat screen, selection screen, and
+  settings before coding.
+
+Deliverable of the session: a short UX spec (`docs/UX-SPEC.md`) that M1–M3
+implement against.
