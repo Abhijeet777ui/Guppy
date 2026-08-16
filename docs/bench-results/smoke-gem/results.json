@@ -1,0 +1,75 @@
+{
+  "generatedAt": "2026-08-16T12:59:32.372Z",
+  "model": "gemini-2.5-flash",
+  "configs": [
+    "guppy-core"
+  ],
+  "maxAttempts": 2,
+  "retry": {
+    "maxRetries": 2,
+    "baseDelayMs": 500,
+    "maxDelayMs": 30000
+  },
+  "results": [
+    {
+      "config": "guppy-core",
+      "taskId": "bugfix-clamp",
+      "kind": "bugfix",
+      "wallTimeMs": 10380,
+      "tokensTotal": 11542,
+      "toolCalls": 3,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\apps\\bench-runner\\.guppy\\bench\\smoke-gem\\fixtures\\guppy-core\\bugfix-clamp",
+      "passed": true,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 10190,
+          "tokens": 11542,
+          "toolCalls": 3,
+          "verified": true
+        }
+      ],
+      "contextHealth": {
+        "files": 4,
+        "scoreMin": 72,
+        "scoreMax": 87,
+        "scoreAvg": 81,
+        "ciStatus": "WARN",
+        "totalTokens": 9668,
+        "wastedTokens": 28,
+        "tokensSaved": 28,
+        "tool": "contextops@0.1.0"
+      }
+    },
+    {
+      "config": "guppy-core",
+      "taskId": "bugfix-sum",
+      "kind": "bugfix",
+      "wallTimeMs": 8159,
+      "tokensTotal": 15609,
+      "toolCalls": 4,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\apps\\bench-runner\\.guppy\\bench\\smoke-gem\\fixtures\\guppy-core\\bugfix-sum",
+      "passed": true,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 8052,
+          "tokens": 15609,
+          "toolCalls": 4,
+          "verified": true
+        }
+      ],
+      "contextHealth": {
+        "files": 5,
+        "scoreMin": 74,
+        "scoreMax": 90,
+        "scoreAvg": 85.8,
+        "ciStatus": "WARN",
+        "totalTokens": 12917,
+        "wastedTokens": 46,
+        "tokensSaved": 48,
+        "tool": "contextops@0.1.0"
+      }
+    }
+  ]
+}

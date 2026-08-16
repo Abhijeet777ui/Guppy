@@ -1,0 +1,68 @@
+{
+  "generatedAt": "2026-08-15T19:48:53.287Z",
+  "model": "qwen2.5-coder:1.5b",
+  "configs": [
+    "guppy-prime"
+  ],
+  "maxAttempts": 2,
+  "results": [
+    {
+      "config": "guppy-prime",
+      "taskId": "bugfix-clamp",
+      "kind": "bugfix",
+      "wallTimeMs": 2929,
+      "tokensTotal": 0,
+      "toolCalls": 0,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\.guppy\\bench\\head-to-head-prime\\fixtures\\guppy-prime\\bugfix-clamp",
+      "passed": false,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 1527,
+          "tokens": 0,
+          "toolCalls": 0,
+          "verified": false,
+          "errorSummary": "\n> test\n> node --test test/*.test.ts\n\n✔ groupBy groups items by key (3.6211ms)\n✔ uniqueBy keeps the first item per key (0.4285ms)\n✔ chunk splits arrays into groups (0.2868ms)\n✔ pluck extracts a field from every item (0.3088ms)\n✖ clamp keeps values inside the range (2.5787ms)\n✔ sum adds all values (0"
+        },
+        {
+          "attempt": 2,
+          "wallTimeMs": 1288,
+          "tokens": 0,
+          "toolCalls": 0,
+          "verified": false,
+          "errorSummary": "\n> test\n> node --test test/*.test.ts\n\n✔ groupBy groups items by key (1.3114ms)\n✔ uniqueBy keeps the first item per key (0.2421ms)\n✔ chunk splits arrays into groups (0.2101ms)\n✔ pluck extracts a field from every item (0.1988ms)\n✖ clamp keeps values inside the range (2.1669ms)\n✔ sum adds all values (0"
+        }
+      ],
+      "error": "\n> test\n> node --test test/*.test.ts\n\n✔ groupBy groups items by key (1.3114ms)\n✔ uniqueBy keeps the first item per key (0.2421ms)\n✔ chunk splits arrays into groups (0.2101ms)\n✔ pluck extracts a field from every item (0.1988ms)\n✖ clamp keeps values inside the range (2.1669ms)\n✔ sum adds all values (0.3346ms)\n✔ average computes the mean (0.4232ms)\n✔ median finds the middle value (0.2732ms)\n✔ roundTo rounds to decimal places (0.2529ms)\n✔ slugify converts text to url slugs (1.9744ms)\n✔ truncate shor"
+    },
+    {
+      "config": "guppy-prime",
+      "taskId": "bugfix-sum",
+      "kind": "bugfix",
+      "wallTimeMs": 2626,
+      "tokensTotal": 0,
+      "toolCalls": 0,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\.guppy\\bench\\head-to-head-prime\\fixtures\\guppy-prime\\bugfix-sum",
+      "passed": false,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 1328,
+          "tokens": 0,
+          "toolCalls": 0,
+          "verified": false,
+          "errorSummary": "\n> test\n> node --test test/*.test.ts\n\n✔ groupBy groups items by key (2.368ms)\n✔ uniqueBy keeps the first item per key (0.3699ms)\n✔ chunk splits arrays into groups (0.3132ms)\n✔ pluck extracts a field from every item (0.4511ms)\n✔ clamp keeps values inside the range (1.2831ms)\n✖ sum adds all values (1."
+        },
+        {
+          "attempt": 2,
+          "wallTimeMs": 1213,
+          "tokens": 0,
+          "toolCalls": 0,
+          "verified": false,
+          "errorSummary": "\n> test\n> node --test test/*.test.ts\n\n✔ groupBy groups items by key (2.5163ms)\n✔ uniqueBy keeps the first item per key (0.4105ms)\n✔ chunk splits arrays into groups (0.3486ms)\n✔ pluck extracts a field from every item (0.3154ms)\n✔ clamp keeps values inside the range (1.0244ms)\n✖ sum adds all values (1"
+        }
+      ],
+      "error": "\n> test\n> node --test test/*.test.ts\n\n✔ groupBy groups items by key (2.5163ms)\n✔ uniqueBy keeps the first item per key (0.4105ms)\n✔ chunk splits arrays into groups (0.3486ms)\n✔ pluck extracts a field from every item (0.3154ms)\n✔ clamp keeps values inside the range (1.0244ms)\n✖ sum adds all values (1.8483ms)\n✖ average computes the mean (0.7609ms)\n✔ median finds the middle value (0.2866ms)\n✔ roundTo rounds to decimal places (0.2555ms)\n✔ slugify converts text to url slugs (1.1578ms)\n✔ truncate shor"
+    }
+  ]
+}

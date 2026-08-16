@@ -1,0 +1,31 @@
+{
+  "name": "@guppy/core",
+  "version": "1.0.0",
+  "description": "Guppy's native in-process agent core: OpenAI-compatible model client, tool loop, and runtime. No pi / prime dependencies.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "lint": "biome check ."
+  },
+  "dependencies": {
+    "@guppy/contracts": "workspace:*",
+    "@guppy/event-store": "workspace:*",
+    "@guppy/workspace": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0",
+    "@biomejs/biome": "^1.8.0",
+    "@types/node": "^22.0.0"
+  },
+  "type": "module"
+}

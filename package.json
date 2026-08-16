@@ -1,0 +1,21 @@
+{
+  "name": "guppy",
+  "version": "1.0.0",
+  "description": "Next-gen agent harness for long-horizon software engineering",
+  "private": true,
+  "scripts": {
+    "build": "pnpm -r run build",
+    "test": "pnpm -r run test",
+    "lint": "pnpm -r run lint",
+    "dev": "pnpm --filter @guppy/control-plane dev",
+    "cli": "pnpm --filter @guppy/control-plane start",
+    "docker:build": "docker build -t guppy/executor:latest docker/executor"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "packageManager": "pnpm@11.20.0",
+  "devDependencies": {
+    "@types/node": "22.0.0"
+  }
+}

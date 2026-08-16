@@ -1,0 +1,59 @@
+{
+  "generatedAt": "2026-08-15T12:02:19.732Z",
+  "model": "claude-3-5-sonnet",
+  "configs": [
+    "prime-raw",
+    "guppy-prime"
+  ],
+  "maxAttempts": 3,
+  "results": [
+    {
+      "config": "prime-raw",
+      "taskId": "bugfix-clamp",
+      "kind": "bugfix",
+      "wallTimeMs": 0,
+      "tokensTotal": 0,
+      "toolCalls": 0,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\.guppy\\bench\\leakcheck\\fixtures\\prime-raw\\bugfix-clamp",
+      "passed": false,
+      "attempts": [],
+      "error": "dry-run: fixture red as expected"
+    },
+    {
+      "config": "prime-raw",
+      "taskId": "testadd-math-utils",
+      "kind": "test-add",
+      "wallTimeMs": 0,
+      "tokensTotal": 0,
+      "toolCalls": 0,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\.guppy\\bench\\leakcheck\\fixtures\\prime-raw\\testadd-math-utils",
+      "passed": false,
+      "attempts": [],
+      "error": "dry-run: fixture red as expected"
+    },
+    {
+      "config": "guppy-prime",
+      "taskId": "bugfix-clamp",
+      "kind": "bugfix",
+      "wallTimeMs": 0,
+      "tokensTotal": 0,
+      "toolCalls": 0,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\.guppy\\bench\\leakcheck\\fixtures\\guppy-prime\\bugfix-clamp",
+      "passed": false,
+      "attempts": [],
+      "error": "dry-run: fixture red as expected"
+    },
+    {
+      "config": "guppy-prime",
+      "taskId": "testadd-math-utils",
+      "kind": "test-add",
+      "wallTimeMs": 0,
+      "tokensTotal": 0,
+      "toolCalls": 0,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\.guppy\\bench\\leakcheck\\fixtures\\guppy-prime\\testadd-math-utils",
+      "passed": false,
+      "attempts": [],
+      "error": "dry-run: fixture red as expected"
+    }
+  ]
+}

@@ -1,0 +1,783 @@
+{
+  "generatedAt": "2026-08-16T13:03:18.136Z",
+  "model": "gemini-2.5-flash",
+  "configs": [
+    "guppy-core"
+  ],
+  "maxAttempts": 2,
+  "retry": {
+    "maxRetries": 2,
+    "baseDelayMs": 500,
+    "maxDelayMs": 30000
+  },
+  "results": [
+    {
+      "config": "guppy-core",
+      "taskId": "bugfix-clamp",
+      "kind": "bugfix",
+      "wallTimeMs": 7928,
+      "tokensTotal": 4955,
+      "toolCalls": 2,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\apps\\bench-runner\\.guppy\\bench\\gem-full\\fixtures\\guppy-core\\bugfix-clamp",
+      "passed": true,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 7491,
+          "tokens": 4955,
+          "toolCalls": 2,
+          "verified": true
+        }
+      ],
+      "contextHealth": {
+        "files": 3,
+        "scoreMin": 72,
+        "scoreMax": 83,
+        "scoreAvg": 78.7,
+        "ciStatus": "WARN",
+        "totalTokens": 6679,
+        "wastedTokens": 21,
+        "tokensSaved": 21,
+        "tool": "contextops@0.1.0"
+      }
+    },
+    {
+      "config": "guppy-core",
+      "taskId": "bugfix-sum",
+      "kind": "bugfix",
+      "wallTimeMs": 8035,
+      "tokensTotal": 0,
+      "toolCalls": 0,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\apps\\bench-runner\\.guppy\\bench\\gem-full\\fixtures\\guppy-core\\bugfix-sum",
+      "passed": false,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 3242,
+          "tokens": 0,
+          "toolCalls": 0,
+          "verified": false,
+          "errorSummary": "\n> test\n> node --test test/*.test.ts\n\n✔ groupBy groups items by key (2.7701ms)\n✔ uniqueBy keeps the first item per key (0.3003ms)\n✔ chunk splits arrays into groups (0.2521ms)\n✔ pluck extracts a field from every item (0.2033ms)\n✔ clamp keeps values inside the range (1.7793ms)\n✖ sum adds all values (1"
+        },
+        {
+          "attempt": 2,
+          "wallTimeMs": 4592,
+          "tokens": 0,
+          "toolCalls": 0,
+          "verified": false,
+          "errorSummary": "\n> test\n> node --test test/*.test.ts\n\n✔ groupBy groups items by key (3.5177ms)\n✔ uniqueBy keeps the first item per key (0.7453ms)\n✔ chunk splits arrays into groups (1.5158ms)\n✔ pluck extracts a field from every item (0.5606ms)\n✔ clamp keeps values inside the range (4.3025ms)\n✖ sum adds all values (2"
+        }
+      ],
+      "error": "\n> test\n> node --test test/*.test.ts\n\n✔ groupBy groups items by key (3.5177ms)\n✔ uniqueBy keeps the first item per key (0.7453ms)\n✔ chunk splits arrays into groups (1.5158ms)\n✔ pluck extracts a field from every item (0.5606ms)\n✔ clamp keeps values inside the range (4.3025ms)\n✖ sum adds all values (2.0217ms)\n✖ average computes the mean (0.7346ms)\n✔ median finds the middle value (0.4487ms)\n✔ roundTo rounds to decimal places (0.3705ms)\n✔ slugify converts text to url slugs (2.195ms)\n✔ truncate short",
+      "contextHealth": {
+        "files": 2,
+        "scoreMin": 68,
+        "scoreMax": 74,
+        "scoreAvg": 71,
+        "ciStatus": "WARN",
+        "totalTokens": 4665,
+        "wastedTokens": 14,
+        "tokensSaved": 13,
+        "tool": "contextops@0.1.0"
+      }
+    },
+    {
+      "config": "guppy-core",
+      "taskId": "bugfix-average",
+      "kind": "bugfix",
+      "wallTimeMs": 6316,
+      "tokensTotal": 0,
+      "toolCalls": 0,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\apps\\bench-runner\\.guppy\\bench\\gem-full\\fixtures\\guppy-core\\bugfix-average",
+      "passed": false,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 2967,
+          "tokens": 0,
+          "toolCalls": 0,
+          "verified": false,
+          "errorSummary": "\n> test\n> node --test test/*.test.ts\n\n✔ groupBy groups items by key (2.7748ms)\n✔ uniqueBy keeps the first item per key (0.4439ms)\n✔ chunk splits arrays into groups (0.3899ms)\n✔ pluck extracts a field from every item (0.3234ms)\n✔ clamp keeps values inside the range (1.2578ms)\n✔ sum adds all values (0"
+        },
+        {
+          "attempt": 2,
+          "wallTimeMs": 3081,
+          "tokens": 0,
+          "toolCalls": 0,
+          "verified": false,
+          "errorSummary": "\n> test\n> node --test test/*.test.ts\n\n✔ groupBy groups items by key (4.8866ms)\n✔ uniqueBy keeps the first item per key (0.4911ms)\n✔ chunk splits arrays into groups (0.4315ms)\n✔ pluck extracts a field from every item (0.3545ms)\n✔ clamp keeps values inside the range (2.7453ms)\n✔ sum adds all values (0"
+        }
+      ],
+      "error": "\n> test\n> node --test test/*.test.ts\n\n✔ groupBy groups items by key (4.8866ms)\n✔ uniqueBy keeps the first item per key (0.4911ms)\n✔ chunk splits arrays into groups (0.4315ms)\n✔ pluck extracts a field from every item (0.3545ms)\n✔ clamp keeps values inside the range (2.7453ms)\n✔ sum adds all values (0.6647ms)\n✖ average computes the mean (3.2605ms)\n✔ median finds the middle value (0.5203ms)\n✔ roundTo rounds to decimal places (0.4793ms)\n✔ slugify converts text to url slugs (2.4478ms)\n✔ truncate shor",
+      "contextHealth": {
+        "files": 2,
+        "scoreMin": 68,
+        "scoreMax": 72,
+        "scoreAvg": 70,
+        "ciStatus": "WARN",
+        "totalTokens": 4759,
+        "wastedTokens": 14,
+        "tokensSaved": 13,
+        "tool": "contextops@0.1.0"
+      }
+    },
+    {
+      "config": "guppy-core",
+      "taskId": "bugfix-median",
+      "kind": "bugfix",
+      "wallTimeMs": 10604,
+      "tokensTotal": 11925,
+      "toolCalls": 3,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\apps\\bench-runner\\.guppy\\bench\\gem-full\\fixtures\\guppy-core\\bugfix-median",
+      "passed": true,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 10460,
+          "tokens": 11925,
+          "toolCalls": 3,
+          "verified": true
+        }
+      ],
+      "contextHealth": {
+        "files": 4,
+        "scoreMin": 72,
+        "scoreMax": 87,
+        "scoreAvg": 81.3,
+        "ciStatus": "WARN",
+        "totalTokens": 9734,
+        "wastedTokens": 28,
+        "tokensSaved": 28,
+        "tool": "contextops@0.1.0"
+      }
+    },
+    {
+      "config": "guppy-core",
+      "taskId": "bugfix-roundto",
+      "kind": "bugfix",
+      "wallTimeMs": 12046,
+      "tokensTotal": 9586,
+      "toolCalls": 3,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\apps\\bench-runner\\.guppy\\bench\\gem-full\\fixtures\\guppy-core\\bugfix-roundto",
+      "passed": true,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 11743,
+          "tokens": 9586,
+          "toolCalls": 3,
+          "verified": true
+        }
+      ],
+      "contextHealth": {
+        "files": 4,
+        "scoreMin": 69,
+        "scoreMax": 81,
+        "scoreAvg": 77,
+        "ciStatus": "WARN",
+        "totalTokens": 11329,
+        "wastedTokens": 39,
+        "tokensSaved": 38,
+        "tool": "contextops@0.1.0"
+      }
+    },
+    {
+      "config": "guppy-core",
+      "taskId": "bugfix-slugify",
+      "kind": "bugfix",
+      "wallTimeMs": 6459,
+      "tokensTotal": 0,
+      "toolCalls": 0,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\apps\\bench-runner\\.guppy\\bench\\gem-full\\fixtures\\guppy-core\\bugfix-slugify",
+      "passed": false,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 3114,
+          "tokens": 0,
+          "toolCalls": 0,
+          "verified": false,
+          "errorSummary": "\n> test\n> node --test test/*.test.ts\n\n✔ groupBy groups items by key (2.5907ms)\n✔ uniqueBy keeps the first item per key (0.9489ms)\n✔ chunk splits arrays into groups (1.7295ms)\n✔ pluck extracts a field from every item (0.7515ms)\n✔ clamp keeps values inside the range (0.9627ms)\n✔ sum adds all values (0"
+        },
+        {
+          "attempt": 2,
+          "wallTimeMs": 3221,
+          "tokens": 0,
+          "toolCalls": 0,
+          "verified": false,
+          "errorSummary": "\n> test\n> node --test test/*.test.ts\n\n✔ groupBy groups items by key (3.6633ms)\n✔ uniqueBy keeps the first item per key (0.394ms)\n✔ chunk splits arrays into groups (0.3584ms)\n✔ pluck extracts a field from every item (0.3007ms)\n✔ clamp keeps values inside the range (1.519ms)\n✔ sum adds all values (0.2"
+        }
+      ],
+      "error": "\n> test\n> node --test test/*.test.ts\n\n✔ groupBy groups items by key (3.6633ms)\n✔ uniqueBy keeps the first item per key (0.394ms)\n✔ chunk splits arrays into groups (0.3584ms)\n✔ pluck extracts a field from every item (0.3007ms)\n✔ clamp keeps values inside the range (1.519ms)\n✔ sum adds all values (0.2997ms)\n✔ average computes the mean (0.7953ms)\n✔ median finds the middle value (0.4016ms)\n✔ roundTo rounds to decimal places (0.3653ms)\n✖ slugify converts text to url slugs (3.1232ms)\n✔ truncate shorte",
+      "contextHealth": {
+        "files": 2,
+        "scoreMin": 68,
+        "scoreMax": 74,
+        "scoreAvg": 71,
+        "ciStatus": "WARN",
+        "totalTokens": 4295,
+        "wastedTokens": 14,
+        "tokensSaved": 15,
+        "tool": "contextops@0.1.0"
+      }
+    },
+    {
+      "config": "guppy-core",
+      "taskId": "bugfix-truncate",
+      "kind": "bugfix",
+      "wallTimeMs": 5875,
+      "tokensTotal": 0,
+      "toolCalls": 0,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\apps\\bench-runner\\.guppy\\bench\\gem-full\\fixtures\\guppy-core\\bugfix-truncate",
+      "passed": false,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 2994,
+          "tokens": 0,
+          "toolCalls": 0,
+          "verified": false,
+          "errorSummary": "\n> test\n> node --test test/*.test.ts\n\n✔ groupBy groups items by key (2.5284ms)\n✔ uniqueBy keeps the first item per key (0.4102ms)\n✔ chunk splits arrays into groups (0.364ms)\n✔ pluck extracts a field from every item (0.4148ms)\n✔ clamp keeps values inside the range (1.8375ms)\n✔ sum adds all values (0."
+        },
+        {
+          "attempt": 2,
+          "wallTimeMs": 2745,
+          "tokens": 0,
+          "toolCalls": 0,
+          "verified": false,
+          "errorSummary": "\n> test\n> node --test test/*.test.ts\n\n✔ groupBy groups items by key (1.9482ms)\n✔ uniqueBy keeps the first item per key (0.2505ms)\n✔ chunk splits arrays into groups (0.2579ms)\n✔ pluck extracts a field from every item (0.1784ms)\n✔ clamp keeps values inside the range (1.2524ms)\n✔ sum adds all values (0"
+        }
+      ],
+      "error": "\n> test\n> node --test test/*.test.ts\n\n✔ groupBy groups items by key (1.9482ms)\n✔ uniqueBy keeps the first item per key (0.2505ms)\n✔ chunk splits arrays into groups (0.2579ms)\n✔ pluck extracts a field from every item (0.1784ms)\n✔ clamp keeps values inside the range (1.2524ms)\n✔ sum adds all values (0.3289ms)\n✔ average computes the mean (0.5245ms)\n✔ median finds the middle value (0.3025ms)\n✔ roundTo rounds to decimal places (0.3167ms)\n✔ slugify converts text to url slugs (1.3527ms)\n✖ truncate shor",
+      "contextHealth": {
+        "files": 2,
+        "scoreMin": 68,
+        "scoreMax": 74,
+        "scoreAvg": 71,
+        "ciStatus": "WARN",
+        "totalTokens": 4347,
+        "wastedTokens": 14,
+        "tokensSaved": 15,
+        "tool": "contextops@0.1.0"
+      }
+    },
+    {
+      "config": "guppy-core",
+      "taskId": "bugfix-is-palindrome",
+      "kind": "bugfix",
+      "wallTimeMs": 5130,
+      "tokensTotal": 0,
+      "toolCalls": 0,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\apps\\bench-runner\\.guppy\\bench\\gem-full\\fixtures\\guppy-core\\bugfix-is-palindrome",
+      "passed": false,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 2476,
+          "tokens": 0,
+          "toolCalls": 0,
+          "verified": false,
+          "errorSummary": "\n> test\n> node --test test/*.test.ts\n\n✔ groupBy groups items by key (2.1052ms)\n✔ uniqueBy keeps the first item per key (0.6112ms)\n✔ chunk splits arrays into groups (0.5235ms)\n✔ pluck extracts a field from every item (0.6491ms)\n✔ clamp keeps values inside the range (1.5146ms)\n✔ sum adds all values (0"
+        },
+        {
+          "attempt": 2,
+          "wallTimeMs": 2525,
+          "tokens": 0,
+          "toolCalls": 0,
+          "verified": false,
+          "errorSummary": "\n> test\n> node --test test/*.test.ts\n\n✔ groupBy groups items by key (2.8916ms)\n✔ uniqueBy keeps the first item per key (0.4523ms)\n✔ chunk splits arrays into groups (0.3878ms)\n✔ pluck extracts a field from every item (0.4288ms)\n✔ clamp keeps values inside the range (1.5518ms)\n✔ sum adds all values (0"
+        }
+      ],
+      "error": "\n> test\n> node --test test/*.test.ts\n\n✔ groupBy groups items by key (2.8916ms)\n✔ uniqueBy keeps the first item per key (0.4523ms)\n✔ chunk splits arrays into groups (0.3878ms)\n✔ pluck extracts a field from every item (0.4288ms)\n✔ clamp keeps values inside the range (1.5518ms)\n✔ sum adds all values (0.3909ms)\n✔ average computes the mean (0.5381ms)\n✔ median finds the middle value (0.3204ms)\n✔ roundTo rounds to decimal places (0.303ms)\n✔ slugify converts text to url slugs (1.5413ms)\n✔ truncate short",
+      "contextHealth": {
+        "files": 2,
+        "scoreMin": 68,
+        "scoreMax": 74,
+        "scoreAvg": 71,
+        "ciStatus": "WARN",
+        "totalTokens": 4346,
+        "wastedTokens": 14,
+        "tokensSaved": 15,
+        "tool": "contextops@0.1.0"
+      }
+    },
+    {
+      "config": "guppy-core",
+      "taskId": "bugfix-groupby",
+      "kind": "bugfix",
+      "wallTimeMs": 5122,
+      "tokensTotal": 0,
+      "toolCalls": 0,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\apps\\bench-runner\\.guppy\\bench\\gem-full\\fixtures\\guppy-core\\bugfix-groupby",
+      "passed": false,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 2628,
+          "tokens": 0,
+          "toolCalls": 0,
+          "verified": false,
+          "errorSummary": "\n> test\n> node --test test/*.test.ts\n\n✖ groupBy groups items by key (7.5532ms)\n✔ uniqueBy keeps the first item per key (0.4922ms)\n✔ chunk splits arrays into groups (0.6873ms)\n✔ pluck extracts a field from every item (0.4431ms)\n✔ clamp keeps values inside the range (1.5353ms)\n✔ sum adds all values (0"
+        },
+        {
+          "attempt": 2,
+          "wallTimeMs": 2367,
+          "tokens": 0,
+          "toolCalls": 0,
+          "verified": false,
+          "errorSummary": "\n> test\n> node --test test/*.test.ts\n\n✖ groupBy groups items by key (3.5389ms)\n✔ uniqueBy keeps the first item per key (0.3929ms)\n✔ chunk splits arrays into groups (0.3228ms)\n✔ pluck extracts a field from every item (0.2899ms)\n✔ clamp keeps values inside the range (1.4765ms)\n✔ sum adds all values (0"
+        }
+      ],
+      "error": "\n> test\n> node --test test/*.test.ts\n\n✖ groupBy groups items by key (3.5389ms)\n✔ uniqueBy keeps the first item per key (0.3929ms)\n✔ chunk splits arrays into groups (0.3228ms)\n✔ pluck extracts a field from every item (0.2899ms)\n✔ clamp keeps values inside the range (1.4765ms)\n✔ sum adds all values (0.327ms)\n✔ average computes the mean (0.518ms)\n✔ median finds the middle value (0.3488ms)\n✔ roundTo rounds to decimal places (0.3448ms)\n✔ slugify converts text to url slugs (0.9892ms)\n✔ truncate shorte",
+      "contextHealth": {
+        "files": 2,
+        "scoreMin": 68,
+        "scoreMax": 72,
+        "scoreAvg": 70,
+        "ciStatus": "WARN",
+        "totalTokens": 4728,
+        "wastedTokens": 14,
+        "tokensSaved": 14,
+        "tool": "contextops@0.1.0"
+      }
+    },
+    {
+      "config": "guppy-core",
+      "taskId": "bugfix-chunk",
+      "kind": "bugfix",
+      "wallTimeMs": 7699,
+      "tokensTotal": 0,
+      "toolCalls": 0,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\apps\\bench-runner\\.guppy\\bench\\gem-full\\fixtures\\guppy-core\\bugfix-chunk",
+      "passed": false,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 2928,
+          "tokens": 0,
+          "toolCalls": 0,
+          "verified": false,
+          "errorSummary": "\n> test\n> node --test test/*.test.ts\n\n✔ groupBy groups items by key (3.4739ms)\n✔ uniqueBy keeps the first item per key (0.3104ms)\n✖ chunk splits arrays into groups (1.7936ms)\n✔ pluck extracts a field from every item (0.2563ms)\n✔ clamp keeps values inside the range (1.2616ms)\n✔ sum adds all values (0"
+        },
+        {
+          "attempt": 2,
+          "wallTimeMs": 4558,
+          "tokens": 0,
+          "toolCalls": 0,
+          "verified": false,
+          "errorSummary": "\n> test\n> node --test test/*.test.ts\n\n✔ groupBy groups items by key (5.2592ms)\n✔ uniqueBy keeps the first item per key (0.6513ms)\n✖ chunk splits arrays into groups (26.899ms)\n✔ pluck extracts a field from every item (0.5299ms)\n✔ clamp keeps values inside the range (3.1605ms)\n✔ sum adds all values (0"
+        }
+      ],
+      "error": "\n> test\n> node --test test/*.test.ts\n\n✔ groupBy groups items by key (5.2592ms)\n✔ uniqueBy keeps the first item per key (0.6513ms)\n✖ chunk splits arrays into groups (26.899ms)\n✔ pluck extracts a field from every item (0.5299ms)\n✔ clamp keeps values inside the range (3.1605ms)\n✔ sum adds all values (0.7769ms)\n✔ average computes the mean (5.5217ms)\n✔ median finds the middle value (0.5259ms)\n✔ roundTo rounds to decimal places (0.4553ms)\n✔ slugify converts text to url slugs (1.8341ms)\n✔ truncate shor",
+      "contextHealth": {
+        "files": 2,
+        "scoreMin": 68,
+        "scoreMax": 74,
+        "scoreAvg": 71,
+        "ciStatus": "WARN",
+        "totalTokens": 4221,
+        "wastedTokens": 14,
+        "tokensSaved": 15,
+        "tool": "contextops@0.1.0"
+      }
+    },
+    {
+      "config": "guppy-core",
+      "taskId": "testadd-math-utils",
+      "kind": "test-add",
+      "wallTimeMs": 5073,
+      "tokensTotal": 0,
+      "toolCalls": 0,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\apps\\bench-runner\\.guppy\\bench\\gem-full\\fixtures\\guppy-core\\testadd-math-utils",
+      "passed": false,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 2792,
+          "tokens": 0,
+          "toolCalls": 0,
+          "verified": false,
+          "errorSummary": "\n> test\n> node --test test/*.test.ts\n\n✔ groupBy groups items by key (2.141ms)\n✔ uniqueBy keeps the first item per key (0.7537ms)\n✔ chunk splits arrays into groups (1.1017ms)\n✔ pluck extracts a field from every item (0.5379ms)\n✖ TODO: test suite not written yet (1.7486ms)\n✔ slugify converts text to u"
+        },
+        {
+          "attempt": 2,
+          "wallTimeMs": 2142,
+          "tokens": 0,
+          "toolCalls": 0,
+          "verified": false,
+          "errorSummary": "\n> test\n> node --test test/*.test.ts\n\n✔ groupBy groups items by key (3.147ms)\n✔ uniqueBy keeps the first item per key (0.4222ms)\n✔ chunk splits arrays into groups (0.3737ms)\n✔ pluck extracts a field from every item (0.4504ms)\n✖ TODO: test suite not written yet (2.121ms)\n✔ slugify converts text to ur"
+        }
+      ],
+      "error": "\n> test\n> node --test test/*.test.ts\n\n✔ groupBy groups items by key (3.147ms)\n✔ uniqueBy keeps the first item per key (0.4222ms)\n✔ chunk splits arrays into groups (0.3737ms)\n✔ pluck extracts a field from every item (0.4504ms)\n✖ TODO: test suite not written yet (2.121ms)\n✔ slugify converts text to url slugs (4.3731ms)\n✔ truncate shortens long text with a suffix (0.3483ms)\n✔ capitalizeWords capitalizes every word (0.3395ms)\n✔ isPalindrome ignores case and punctuation (0.3372ms)\nℹ tests 9\nℹ suites ",
+      "contextHealth": {
+        "files": 2,
+        "scoreMin": 70,
+        "scoreMax": 76,
+        "scoreAvg": 73,
+        "ciStatus": "WARN",
+        "totalTokens": 3984,
+        "wastedTokens": 14,
+        "tokensSaved": 15,
+        "tool": "contextops@0.1.0"
+      }
+    },
+    {
+      "config": "guppy-core",
+      "taskId": "testadd-median-roundto",
+      "kind": "test-add",
+      "wallTimeMs": 10223,
+      "tokensTotal": 6596,
+      "toolCalls": 2,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\apps\\bench-runner\\.guppy\\bench\\gem-full\\fixtures\\guppy-core\\testadd-median-roundto",
+      "passed": true,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 2923,
+          "tokens": 0,
+          "toolCalls": 0,
+          "verified": false,
+          "errorSummary": "\n> test\n> node --test test/*.test.ts\n\n✔ groupBy groups items by key (2.474ms)\n✔ uniqueBy keeps the first item per key (0.4554ms)\n✔ chunk splits arrays into groups (0.4192ms)\n✔ pluck extracts a field from every item (0.2532ms)\n✖ TODO: test suite not written yet (2.1063ms)\n✔ slugify converts text to u"
+        },
+        {
+          "attempt": 2,
+          "wallTimeMs": 7196,
+          "tokens": 6596,
+          "toolCalls": 2,
+          "verified": true
+        }
+      ],
+      "contextHealth": {
+        "files": 4,
+        "scoreMin": 69,
+        "scoreMax": 75,
+        "scoreAvg": 72,
+        "ciStatus": "WARN",
+        "totalTokens": 10182,
+        "wastedTokens": 28,
+        "tokensSaved": 29,
+        "tool": "contextops@0.1.0"
+      }
+    },
+    {
+      "config": "guppy-core",
+      "taskId": "testadd-string-utils",
+      "kind": "test-add",
+      "wallTimeMs": 5331,
+      "tokensTotal": 0,
+      "toolCalls": 0,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\apps\\bench-runner\\.guppy\\bench\\gem-full\\fixtures\\guppy-core\\testadd-string-utils",
+      "passed": false,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 2790,
+          "tokens": 0,
+          "toolCalls": 0,
+          "verified": false,
+          "errorSummary": "\n> test\n> node --test test/*.test.ts\n\n✔ groupBy groups items by key (2.9221ms)\n✔ uniqueBy keeps the first item per key (0.5223ms)\n✔ chunk splits arrays into groups (0.4387ms)\n✔ pluck extracts a field from every item (0.3592ms)\n✔ clamp keeps values inside the range (1.36ms)\n✔ sum adds all values (0.3"
+        },
+        {
+          "attempt": 2,
+          "wallTimeMs": 2432,
+          "tokens": 0,
+          "toolCalls": 0,
+          "verified": false,
+          "errorSummary": "\n> test\n> node --test test/*.test.ts\n\n✔ groupBy groups items by key (2.461ms)\n✔ uniqueBy keeps the first item per key (0.3689ms)\n✔ chunk splits arrays into groups (0.3322ms)\n✔ pluck extracts a field from every item (0.2852ms)\n✔ clamp keeps values inside the range (1.3333ms)\n✔ sum adds all values (0."
+        }
+      ],
+      "error": "\n> test\n> node --test test/*.test.ts\n\n✔ groupBy groups items by key (2.461ms)\n✔ uniqueBy keeps the first item per key (0.3689ms)\n✔ chunk splits arrays into groups (0.3322ms)\n✔ pluck extracts a field from every item (0.2852ms)\n✔ clamp keeps values inside the range (1.3333ms)\n✔ sum adds all values (0.2901ms)\n✔ average computes the mean (0.4956ms)\n✔ median finds the middle value (0.32ms)\n✔ roundTo rounds to decimal places (0.3203ms)\n✖ TODO: test suite not written yet (2.697ms)\nℹ tests 10\nℹ suites 0",
+      "contextHealth": {
+        "files": 2,
+        "scoreMin": 69,
+        "scoreMax": 74,
+        "scoreAvg": 71.5,
+        "ciStatus": "WARN",
+        "totalTokens": 4124,
+        "wastedTokens": 14,
+        "tokensSaved": 14,
+        "tool": "contextops@0.1.0"
+      }
+    },
+    {
+      "config": "guppy-core",
+      "taskId": "testadd-palindrome-capitalize",
+      "kind": "test-add",
+      "wallTimeMs": 4349,
+      "tokensTotal": 0,
+      "toolCalls": 0,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\apps\\bench-runner\\.guppy\\bench\\gem-full\\fixtures\\guppy-core\\testadd-palindrome-capitalize",
+      "passed": false,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 2216,
+          "tokens": 0,
+          "toolCalls": 0,
+          "verified": false,
+          "errorSummary": "\n> test\n> node --test test/*.test.ts\n\n✔ groupBy groups items by key (1.7916ms)\n✔ uniqueBy keeps the first item per key (0.2364ms)\n✔ chunk splits arrays into groups (0.2017ms)\n✔ pluck extracts a field from every item (0.1803ms)\n✔ clamp keeps values inside the range (1.3046ms)\n✔ sum adds all values (0"
+        },
+        {
+          "attempt": 2,
+          "wallTimeMs": 2018,
+          "tokens": 0,
+          "toolCalls": 0,
+          "verified": false,
+          "errorSummary": "\n> test\n> node --test test/*.test.ts\n\n✔ groupBy groups items by key (3.3426ms)\n✔ uniqueBy keeps the first item per key (0.4408ms)\n✔ chunk splits arrays into groups (0.3672ms)\n✔ pluck extracts a field from every item (0.5382ms)\n✔ clamp keeps values inside the range (1.5271ms)\n✔ sum adds all values (0"
+        }
+      ],
+      "error": "\n> test\n> node --test test/*.test.ts\n\n✔ groupBy groups items by key (3.3426ms)\n✔ uniqueBy keeps the first item per key (0.4408ms)\n✔ chunk splits arrays into groups (0.3672ms)\n✔ pluck extracts a field from every item (0.5382ms)\n✔ clamp keeps values inside the range (1.5271ms)\n✔ sum adds all values (0.3447ms)\n✔ average computes the mean (0.539ms)\n✔ median finds the middle value (0.3948ms)\n✔ roundTo rounds to decimal places (0.3326ms)\n✖ TODO: test suite not written yet (1.5165ms)\nℹ tests 10\nℹ suite",
+      "contextHealth": {
+        "files": 2,
+        "scoreMin": 69,
+        "scoreMax": 74,
+        "scoreAvg": 71.5,
+        "ciStatus": "WARN",
+        "totalTokens": 4172,
+        "wastedTokens": 14,
+        "tokensSaved": 15,
+        "tool": "contextops@0.1.0"
+      }
+    },
+    {
+      "config": "guppy-core",
+      "taskId": "testadd-collections",
+      "kind": "test-add",
+      "wallTimeMs": 7510,
+      "tokensTotal": 0,
+      "toolCalls": 0,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\apps\\bench-runner\\.guppy\\bench\\gem-full\\fixtures\\guppy-core\\testadd-collections",
+      "passed": false,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 4318,
+          "tokens": 0,
+          "toolCalls": 0,
+          "verified": false,
+          "errorSummary": "\n> test\n> node --test test/*.test.ts\n\n✖ TODO: test suite not written yet (2.211ms)\n✔ clamp keeps values inside the range (2.0218ms)\n✔ sum adds all values (0.3801ms)\n✔ average computes the mean (0.6402ms)\n✔ median finds the middle value (0.4449ms)\n✔ roundTo rounds to decimal places (3.7163ms)\n✔ slugi"
+        },
+        {
+          "attempt": 2,
+          "wallTimeMs": 3068,
+          "tokens": 0,
+          "toolCalls": 0,
+          "verified": false,
+          "errorSummary": "\n> test\n> node --test test/*.test.ts\n\n✖ TODO: test suite not written yet (1.9184ms)\n✔ clamp keeps values inside the range (1.3183ms)\n✔ sum adds all values (0.4303ms)\n✔ average computes the mean (0.7221ms)\n✔ median finds the middle value (0.3753ms)\n✔ roundTo rounds to decimal places (0.3621ms)\n✔ slug"
+        }
+      ],
+      "error": "\n> test\n> node --test test/*.test.ts\n\n✖ TODO: test suite not written yet (1.9184ms)\n✔ clamp keeps values inside the range (1.3183ms)\n✔ sum adds all values (0.4303ms)\n✔ average computes the mean (0.7221ms)\n✔ median finds the middle value (0.3753ms)\n✔ roundTo rounds to decimal places (0.3621ms)\n✔ slugify converts text to url slugs (1.7683ms)\n✔ truncate shortens long text with a suffix (0.4358ms)\n✔ capitalizeWords capitalizes every word (0.5224ms)\n✔ isPalindrome ignores case and punctuation (0.441m",
+      "contextHealth": {
+        "files": 2,
+        "scoreMin": 69,
+        "scoreMax": 75,
+        "scoreAvg": 72,
+        "ciStatus": "WARN",
+        "totalTokens": 4032,
+        "wastedTokens": 14,
+        "tokensSaved": 13,
+        "tool": "contextops@0.1.0"
+      }
+    },
+    {
+      "config": "guppy-core",
+      "taskId": "refactor-rename-clamp",
+      "kind": "refactor",
+      "wallTimeMs": 5693,
+      "tokensTotal": 0,
+      "toolCalls": 0,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\apps\\bench-runner\\.guppy\\bench\\gem-full\\fixtures\\guppy-core\\refactor-rename-clamp",
+      "passed": false,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 2380,
+          "tokens": 0,
+          "toolCalls": 0,
+          "verified": false,
+          "errorSummary": "  'test: '"
+        },
+        {
+          "attempt": 2,
+          "wallTimeMs": 3096,
+          "tokens": 0,
+          "toolCalls": 0,
+          "verified": false,
+          "errorSummary": "  'test: '"
+        }
+      ],
+      "error": "  'test: '",
+      "contextHealth": {
+        "files": 2,
+        "scoreMin": 68,
+        "scoreMax": 70,
+        "scoreAvg": 69,
+        "ciStatus": "WARN",
+        "totalTokens": 5413,
+        "wastedTokens": 14,
+        "tokensSaved": 13,
+        "tool": "contextops@0.1.0"
+      }
+    },
+    {
+      "config": "guppy-core",
+      "taskId": "refactor-rename-average",
+      "kind": "refactor",
+      "wallTimeMs": 6104,
+      "tokensTotal": 0,
+      "toolCalls": 0,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\apps\\bench-runner\\.guppy\\bench\\gem-full\\fixtures\\guppy-core\\refactor-rename-average",
+      "passed": false,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 3042,
+          "tokens": 0,
+          "toolCalls": 0,
+          "verified": false,
+          "errorSummary": "  'test: '"
+        },
+        {
+          "attempt": 2,
+          "wallTimeMs": 2901,
+          "tokens": 0,
+          "toolCalls": 0,
+          "verified": false,
+          "errorSummary": "  'test: '"
+        }
+      ],
+      "error": "  'test: '",
+      "contextHealth": {
+        "files": 2,
+        "scoreMin": 68,
+        "scoreMax": 70,
+        "scoreAvg": 69,
+        "ciStatus": "WARN",
+        "totalTokens": 5397,
+        "wastedTokens": 14,
+        "tokensSaved": 13,
+        "tool": "contextops@0.1.0"
+      }
+    },
+    {
+      "config": "guppy-core",
+      "taskId": "refactor-rename-slugify",
+      "kind": "refactor",
+      "wallTimeMs": 4912,
+      "tokensTotal": 0,
+      "toolCalls": 0,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\apps\\bench-runner\\.guppy\\bench\\gem-full\\fixtures\\guppy-core\\refactor-rename-slugify",
+      "passed": false,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 2791,
+          "tokens": 0,
+          "toolCalls": 0,
+          "verified": false,
+          "errorSummary": "  'test: '"
+        },
+        {
+          "attempt": 2,
+          "wallTimeMs": 1970,
+          "tokens": 0,
+          "toolCalls": 0,
+          "verified": false,
+          "errorSummary": "  'test: '"
+        }
+      ],
+      "error": "  'test: '",
+      "contextHealth": {
+        "files": 2,
+        "scoreMin": 68,
+        "scoreMax": 70,
+        "scoreAvg": 69,
+        "ciStatus": "WARN",
+        "totalTokens": 5417,
+        "wastedTokens": 14,
+        "tokensSaved": 13,
+        "tool": "contextops@0.1.0"
+      }
+    },
+    {
+      "config": "guppy-core",
+      "taskId": "refactor-rename-groupby",
+      "kind": "refactor",
+      "wallTimeMs": 5473,
+      "tokensTotal": 0,
+      "toolCalls": 0,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\apps\\bench-runner\\.guppy\\bench\\gem-full\\fixtures\\guppy-core\\refactor-rename-groupby",
+      "passed": false,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 2287,
+          "tokens": 0,
+          "toolCalls": 0,
+          "verified": false,
+          "errorSummary": "  'test: '"
+        },
+        {
+          "attempt": 2,
+          "wallTimeMs": 3028,
+          "tokens": 0,
+          "toolCalls": 0,
+          "verified": false,
+          "errorSummary": "  'test: '"
+        }
+      ],
+      "error": "  'test: '",
+      "contextHealth": {
+        "files": 2,
+        "scoreMin": 68,
+        "scoreMax": 70,
+        "scoreAvg": 69,
+        "ciStatus": "WARN",
+        "totalTokens": 5403,
+        "wastedTokens": 14,
+        "tokensSaved": 13,
+        "tool": "contextops@0.1.0"
+      }
+    },
+    {
+      "config": "guppy-core",
+      "taskId": "refactor-rename-pluck",
+      "kind": "refactor",
+      "wallTimeMs": 8147,
+      "tokensTotal": 0,
+      "toolCalls": 0,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\apps\\bench-runner\\.guppy\\bench\\gem-full\\fixtures\\guppy-core\\refactor-rename-pluck",
+      "passed": false,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 4646,
+          "tokens": 0,
+          "toolCalls": 0,
+          "verified": false,
+          "errorSummary": "  'test: '"
+        },
+        {
+          "attempt": 2,
+          "wallTimeMs": 3356,
+          "tokens": 0,
+          "toolCalls": 0,
+          "verified": false,
+          "errorSummary": "  'test: '"
+        }
+      ],
+      "error": "  'test: '",
+      "contextHealth": {
+        "files": 2,
+        "scoreMin": 68,
+        "scoreMax": 70,
+        "scoreAvg": 69,
+        "ciStatus": "WARN",
+        "totalTokens": 5401,
+        "wastedTokens": 14,
+        "tokensSaved": 13,
+        "tool": "contextops@0.1.0"
+      }
+    }
+  ]
+}

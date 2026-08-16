@@ -1,0 +1,29 @@
+{
+  "generatedAt": "2026-08-15T16:34:18.405Z",
+  "model": "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
+  "configs": [
+    "prime-raw"
+  ],
+  "maxAttempts": 3,
+  "results": [
+    {
+      "config": "prime-raw",
+      "taskId": "bugfix-clamp",
+      "kind": "bugfix",
+      "wallTimeMs": 86639,
+      "tokensTotal": 66974,
+      "toolCalls": 15,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\.guppy\\bench\\stage0-pilot2\\fixtures\\prime-raw\\bugfix-clamp",
+      "passed": true,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 86614,
+          "tokens": 66974,
+          "toolCalls": 15,
+          "verified": true
+        }
+      ]
+    }
+  ]
+}

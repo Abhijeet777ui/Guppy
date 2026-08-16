@@ -1,0 +1,39 @@
+{
+  "generatedAt": "2026-08-15T20:05:06.718Z",
+  "model": "nvidia/nemotron-3-super-120b-a12b:free",
+  "configs": [
+    "guppy-prime"
+  ],
+  "maxAttempts": 2,
+  "results": [
+    {
+      "config": "guppy-prime",
+      "taskId": "bugfix-clamp",
+      "kind": "bugfix",
+      "wallTimeMs": 112777,
+      "tokensTotal": 59034,
+      "toolCalls": 15,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\.guppy\\bench\\h2h-prime\\fixtures\\guppy-prime\\bugfix-clamp",
+      "passed": false,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 88973,
+          "tokens": 59034,
+          "toolCalls": 15,
+          "verified": false,
+          "errorSummary": "\n> test\n> node --test test/*.test.ts\n\n✔ groupBy groups items by key (2.8641ms)\n✔ uniqueBy keeps the first item per key (0.4102ms)\n✔ chunk splits arrays into groups (0.2114ms)\n✔ pluck extracts a field from every item (0.1422ms)\n✖ clamp keeps values inside the range (2.6378ms)\n✔ sum adds all values (0"
+        },
+        {
+          "attempt": 2,
+          "wallTimeMs": 23705,
+          "tokens": 0,
+          "toolCalls": 0,
+          "verified": false,
+          "errorSummary": "\n> test\n> node --test test/*.test.ts\n\n✔ groupBy groups items by key (5.1315ms)\n✔ uniqueBy keeps the first item per key (0.4212ms)\n✔ chunk splits arrays into groups (0.7511ms)\n✔ pluck extracts a field from every item (0.577ms)\n✖ clamp keeps values inside the range (3.3074ms)\n✔ sum adds all values (0."
+        }
+      ],
+      "error": "\n> test\n> node --test test/*.test.ts\n\n✔ groupBy groups items by key (5.1315ms)\n✔ uniqueBy keeps the first item per key (0.4212ms)\n✔ chunk splits arrays into groups (0.7511ms)\n✔ pluck extracts a field from every item (0.577ms)\n✖ clamp keeps values inside the range (3.3074ms)\n✔ sum adds all values (0.5426ms)\n✔ average computes the mean (0.4899ms)\n✔ median finds the middle value (0.3077ms)\n✔ roundTo rounds to decimal places (0.339ms)\n✔ slugify converts text to url slugs (1.9085ms)\n✔ truncate shorte"
+    }
+  ]
+}

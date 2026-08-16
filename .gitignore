@@ -1,0 +1,35 @@
+# ---- Dependencies ----
+node_modules/
+
+# ---- Build output ----
+dist/
+build/
+*.tsbuildinfo
+.turbo/
+coverage/
+.nyc_output/
+
+# ---- Guppy runtime state (regenerable: event stores, memory, worktrees, bench runs) ----
+.guppy/
+**/.guppy/
+.stream-demo/
+**/.stream-demo/
+**/.stream-*/
+
+# ---- Logs ----
+*.log
+logs/
+npm-debug.log*
+pnpm-debug.log*
+
+# ---- Env / secrets ----
+.env
+.env.*
+!.env.example
+
+# ---- Editor / OS ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

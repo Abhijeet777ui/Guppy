@@ -1,0 +1,32 @@
+{
+  "name": "@guppy/workspace",
+  "version": "1.0.0",
+  "description": "Docker execution manager with git worktree support",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "lint": "biome check ."
+  },
+  "dependencies": {
+    "@guppy/contracts": "workspace:*",
+    "dockerode": "^4.0.0",
+    "execa": "^9.0.0",
+    "glob": "^11.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0",
+    "@biomejs/biome": "^1.8.0",
+    "@types/dockerode": "^3.3.0"
+  },
+  "type": "module"
+}
