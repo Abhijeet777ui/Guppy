@@ -92,6 +92,7 @@ export function runTui(options: ChatOptions): Promise<void> {
     let busy = false;
     let shuttingDown = false;
     let finished = false;
+    let verbose = false;
     let activeProvider = options.provider;
     let verificationLevel = options.verificationLevel;
 
@@ -127,6 +128,9 @@ export function runTui(options: ChatOptions): Promise<void> {
       }
     };
     const pipeConsole = (...args: unknown[]): void => {
+      // Swallow engine chatter entirely unless /verbose — it must neither reach
+      // stdout (screen corruption) nor flood the clean transcript.
+      if (!verbose) return;
       const text = args.map(stringifyArg).join(' ');
       for (const line of text.split('\n')) {
         if (line.trim() !== '') transcript.append(line);
@@ -148,19 +152,20 @@ export function runTui(options: ChatOptions): Promise<void> {
     // Lifecycle
     // -----------------------------------------------------------------------
 
-    const detachLiveStream = options.quiet
-      ? () => {}
-      : engine.eventStore.subscribe((event) => {
-          try {
-            const line = renderLiveEvent(event);
-            if (line) {
-              transcript.append(line);
-              tui.requestRender();
-            }
-          } catch {
-            // Rendering is best-effort; the event log is the source of truth.
-          }
-        });
+    const detachLiveStream = engine.eventStore.subscribe((event) => {
+      // The transcript stays clean by default (user message → result); the raw
+      // event stream only appears with /verbose, for debugging a run.
+      if (!verbose) return;
+      try {
+        const line = renderLiveEvent(event);
+        if (line) {
+          transcript.append(line);
+          tui.requestRender();
+        }
+      } catch {
+        // Rendering is best-effort; the event log is the source of truth.
+      }
+    });
 
     const finishShutdown = async (): Promise<void> => {
       if (finished) return;
@@ -282,6 +287,7 @@ export function runTui(options: ChatOptions): Promise<void> {
       chalk.gray('  /model <id>        switch the active model'),
       chalk.gray('  /thinking [level]  show or set reasoning level (off|minimal|low|medium|high|xhigh|max)'),
       chalk.gray('  /verify <level>    set the verification level (0-5)'),
+      chalk.gray('  /verbose           toggle raw event/engine logging on or off'),
       chalk.gray('  /exit, /quit, Ctrl+C   leave the chat'),
       chalk.gray('  anything else      run it as a task through the gated agent loop'),
     ];
@@ -457,7 +463,7 @@ export function runTui(options: ChatOptions): Promise<void> {
     async function runTaskTurn(line: string): Promise<void> {
       busy = true;
       refreshStatus();
-      transcript.append(chalk.blue(`\n[Guppy] Working on: ${line}`));
+      transcript.append(chalk.bold(`You: ${line}`));
       tui.requestRender();
       const task: Task = {
         id: ulid(),
@@ -512,6 +518,11 @@ export function runTui(options: ChatOptions): Promise<void> {
         setProvider(line);
         return;
       }
+      if (line === '/model') {
+        transcript.append(chalk.yellow('Usage: /model <model-id> — or /models to browse and pick.'));
+        tui.requestRender();
+        return;
+      }
       if (line.startsWith('/model ')) {
         await switchModel(line.slice('/model '.length).trim());
         return;
@@ -520,8 +531,19 @@ export function runTui(options: ChatOptions): Promise<void> {
         await setThinking(line);
         return;
       }
+      if (line === '/verify') {
+        transcript.append(chalk.yellow('Usage: /verify <level 0-5> (6 formal verification is unsupported).'));
+        tui.requestRender();
+        return;
+      }
       if (line.startsWith('/verify ')) {
         setVerify(line);
+        return;
+      }
+      if (line === '/verbose') {
+        verbose = !verbose;
+        transcript.append(chalk.gray(`Verbose event logging ${verbose ? 'on' : 'off'}.`));
+        tui.requestRender();
         return;
       }
       if (line === '/setup' || line.startsWith('/setup ')) {
