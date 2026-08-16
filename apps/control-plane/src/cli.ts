@@ -38,6 +38,7 @@ import { createSessionManager } from './session-manager.js';
 import { latestCheckpoint } from './checkpoint.js';
 import { attachLiveStream } from './live-stream.js';
 import { buildAgentRuntime, runChat, type RuntimeOptions } from './chat.js';
+import { runTui } from './tui.js';
 import { join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -370,6 +371,8 @@ program
   .option('--no-commit', 'Merge changes back without creating git commits (files overlaid onto the repo)')
   .option('--force', 'With --no-commit, overwrite uncommitted repo changes (dangerous)')
   .option('-q, --quiet', 'Suppress live event streaming (summary only)')
+  .option('--tui', 'Use the fullscreen terminal interface (default when stdin/stdout are TTYs)')
+  .option('--no-tui', 'Use the line-based REPL instead of the fullscreen TUI')
   .action(async (options) => {
     const probe = await createWorkspaceManager({
       dockerImage: 'guppy/executor:latest',
@@ -379,7 +382,7 @@ program
       console.error(chalk.red(`[Guppy] ${probe.reason}.`));
       process.exit(1);
     }
-    await runChat({
+    const chatOptions = {
       repoPath: resolve(options.repo),
       ...toRuntimeOptions(options),
       verificationLevel: parseVerificationLevel(options.verification),
@@ -390,7 +393,15 @@ program
       // commander parses `--no-commit` as the negation of `commit`.
       ...(options.commit === false ? { noCommit: true } : {}),
       ...(options.force ? { force: true } : {}),
-    });
+    };
+    // Fullscreen TUI on an interactive terminal; the REPL everywhere else
+    // (piped stdin, scripts, CI). `--tui` / `--no-tui` force either way.
+    const useTui = options.tui ?? (process.stdin.isTTY === true && process.stdout.isTTY === true);
+    if (useTui) {
+      await runTui(chatOptions);
+    } else {
+      await runChat(chatOptions);
+    }
   });
 
 program

@@ -224,7 +224,31 @@ export interface ChatOptions extends RuntimeOptions {
   output?: NodeJS.WritableStream;
 }
 
-export async function runChat(options: ChatOptions): Promise<void> {
+/**
+ * Shared construction of the runtime + session lifecycle used by both the
+ * REPL and the TUI. Everything the agent loop needs (event store, sandbox
+ * workspace manager, context engine, verification engine) is created exactly
+ * once here, so the two front-ends can't drift apart. Model/provider/thinking
+ * switches mutate `options` and then call `rebuild`, which tears down the
+ * current runtime and builds a fresh one over the same store/workspace.
+ */
+export interface ChatEngine {
+  repoPath: string;
+  eventStore: EventStore;
+  workspaceManager: WorkspaceManager;
+  contextEngine: ContextEngine;
+  verificationEngine: ReturnType<typeof createVerificationEngine>;
+  /** Current runtime (rebuilt in place on /model & /thinking switches). */
+  readonly agentRuntime: AgentRuntime;
+  /** Current session manager (rebuilt alongside the runtime). */
+  readonly sessionManager: SessionManager;
+  /** Mutate runtime options, then rebuild the runtime + session in place. */
+  rebuild(mutate: () => void): Promise<void>;
+  /** Shut down the runtime and close the event store. */
+  shutdown(): Promise<void>;
+}
+
+export function createChatEngine(options: ChatOptions): ChatEngine {
   const repoPath = resolve(options.repoPath);
   const eventStore = createEventStore({ rootDir: resolve(repoPath, '.guppy', 'events') });
   const workspaceManager = createWorkspaceManager({
@@ -239,6 +263,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
     projectRoot: repoPath,
     timeout: 300_000,
   });
+
   /** Build a session manager over the current runtime (reused on /model switch). */
   const createSession = (): SessionManager =>
     createSessionManager({
@@ -260,6 +285,36 @@ export async function runChat(options: ChatOptions): Promise<void> {
 
   let agentRuntime = buildAgentRuntime(options, eventStore, workspaceManager);
   let sessionManager = createSession();
+
+  return {
+    repoPath,
+    eventStore,
+    workspaceManager,
+    contextEngine,
+    verificationEngine,
+    get agentRuntime() {
+      return agentRuntime;
+    },
+    get sessionManager() {
+      return sessionManager;
+    },
+    async rebuild(mutate: () => void): Promise<void> {
+      await agentRuntime.shutdown();
+      mutate();
+      agentRuntime = buildAgentRuntime(options, eventStore, workspaceManager);
+      sessionManager = createSession();
+    },
+    async shutdown(): Promise<void> {
+      await agentRuntime.shutdown();
+      await eventStore.close();
+    },
+  };
+}
+
+export async function runChat(options: ChatOptions): Promise<void> {
+  const engine = createChatEngine(options);
+  const repoPath = engine.repoPath;
+  const eventStore = engine.eventStore;
 
   const input = options.input ?? process.stdin;
   const output = options.output ?? process.stdout;
@@ -349,12 +404,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
   };
 
   /** Rebuild runtime + session after a mutation (keeps memory/events). */
-  async function swapRuntime(mutate: () => void): Promise<void> {
-    await agentRuntime.shutdown();
-    mutate();
-    agentRuntime = buildAgentRuntime(options, eventStore, workspaceManager);
-    sessionManager = createSession();
-  }
+  const swapRuntime = (mutate: () => void): Promise<void> => engine.rebuild(mutate);
 
   /** Swap the active model: rebuild runtime + session while keeping memory/events. */
   async function rebuildRuntime(next: ModelConfig): Promise<void> {
@@ -416,7 +466,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
       metadata: { chat: true },
     };
     console.log(chalk.blue(`\n[Guppy] Working on: ${userInput}`));
-    const result = await runChatTurn(sessionManager, task);
+    const result = await runChatTurn(engine.sessionManager, task);
     if (result.ok) {
       const status =
         result.outcome === 'success'

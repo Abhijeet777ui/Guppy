@@ -11,7 +11,7 @@
 Every claim below was checked against the current tree, not memory:
 
 - **Build:** `pnpm -r run build` — green across all 11 workspace projects.
-- **Tests:** `pnpm -r run test` (root `pnpm test`) — green end-to-end; 173 tests across 11 suites (only `contracts` passes via `--passWithNoTests`):
+- **Tests:** `pnpm -r run test` (root `pnpm test`) — green end-to-end; 182 tests across 11 suites (only `contracts` passes via `--passWithNoTests`):
 
   | Suite | Tests | Covers |
   |---|---|---|
@@ -24,7 +24,7 @@ Every claim below was checked against the current tree, not memory:
   | `@guppy/memory` | 13 | record/count/clear, persistence across instances, corrupt-line tolerance, tag/type/taskId/limit retrieval + recency decay, `retrieveForFailure`, `ingestTrajectory`, `extractFixes` (failure→change→pass, unresolved, typecheck, over-attribution) |
   | `@guppy/sleep-cycle` | 6 | failure clustering, fix extraction, memory re-ingest |
   | `@guppy/context-engine` | 8 | skills loader/producer/selection |
-  | `@guppy/control-plane` | 31 | full standalone loop, resume, checkpoint, live-stream, chat (incl. mid-turn-exit), worktree merge-back, skills E2E, verification levels 2/4/5 E2E, container-mode E2E (skipped without Docker or the locally-built executor image) |
+  | `@guppy/control-plane` | 40 | full standalone loop, resume, checkpoint, live-stream, chat (incl. mid-turn-exit), TUI logic (transcript buffer, model picker items, status line), worktree merge-back, skills E2E, verification levels 2/4/5 E2E, container-mode E2E (skipped without Docker or the locally-built executor image) |
   | `@guppy/bench-runner` | 23 | context-health/tokens-saved bridge, dry-run wiring, prime binary resolution, loud spawn failures + loud model-client error surfacing, dataset loaders + materialization, refactor-rename `finalCheck` regression (generic signatures) |
 
 - **Real-model runs:**
@@ -121,8 +121,8 @@ pi/prime code is confined to `agent-runtime` (both adapters opt-in behind `--run
 ### 3.11 Live streaming
 `EventStore.subscribe()` — a listener hook on the single funnel every runtime and the verification engine write to — plus a `live-stream.ts` renderer for all 18 event types (`[task]`, `[model]`, `[tool]`, `[gate]`, `[ckpt]`, …). Default-on in `guppy run` and `guppy chat`; `-q/--quiet` restores summary-only output. Listeners fire synchronously after persist and a throwing listener is caught + logged, so rendering can never break a run.
 
-### 3.12 Interactive chat (`guppy chat`)
-A REPL over the same SessionManager loop: each message is a gated task run (verify → retry → memory), streamed live, with per-turn summaries (outcome, duration, tokens, tool calls, tests) and slash commands — `/help`, `/models [query]` (browse core-compatible models), `/provider [id]` (list/set provider), `/model <id>` (switch model mid-session by rebuilding the runtime), `/verify <0-5>` (6 formal = unsupported), `/exit`. Shares `buildAgentRuntime` with `run`; guarded so `/exit` or EOF mid-turn defers shutdown until the turn lands (regression-tested).
+### 3.12 Interactive chat (`guppy chat` — REPL + fullscreen TUI)
+A REPL over the same SessionManager loop: each message is a gated task run (verify → retry → memory), streamed live, with per-turn summaries (outcome, duration, tokens, tool calls, tests) and slash commands — `/help`, `/models [query]` (browse core-compatible models), `/provider [id]` (list/set provider), `/model <id>` (switch model mid-session by rebuilding the runtime), `/verify <0-5>` (6 formal = unsupported), `/exit`. Shares `buildAgentRuntime` with `run`; guarded so `/exit` or EOF mid-turn defers shutdown until the turn lands (regression-tested). On a TTY this becomes a **fullscreen TUI** (pi-tui, MIT — attributed in NOTICE): a scrollable transcript fed by the live event stream, an input dock, a status line, and a `/models` `SelectList` overlay with type-ahead filtering; the same slash commands apply, model/thinking switches rebuild the runtime in place via the shared `createChatEngine`, and the readline REPL remains the non-TTY / `--no-tui` fallback.
 
 ### 3.13 Worktree merge-back
 On success the agent's changes land in the source repo: git repos get a `commit + merge` (inline Guppy author, your git identity untouched) and the worktree branch is removed; non-git repos get a file mirror including deletions. `--keep-worktree` opts out on either outcome, `--commit-message <template>` (with `{task}`) customizes the commit, and `--no-commit` overlays files with no git history. Failed merges keep the worktree and print its path; `--resume` merges back too.
@@ -180,7 +180,7 @@ Memory roots at `<repo>/.guppy/memory`. Cross-repo/shared knowledge is not wired
 `--temperature` / `--max-tokens` flags on `run` + `chat`; the core client streams SSE by default (`--no-stream` to disable), emitting throttled `ModelStreamed` events through the live stream while still accumulating the full response for tool-call parsing.
 
 ### 5.9 ~~No interactive mode~~ — ✅ done
-`guppy chat` opens a REPL over the same SessionManager loop: each message is a gated task run, streamed live, with per-turn summaries, `/help`, `/verify <0-5>` (6 formal = unsupported), and `/exit`.
+`guppy chat` opens an interactive session over the same SessionManager loop — a **fullscreen TUI** on a TTY (scrollable transcript + input dock + status line + `/models` picker) with the readline REPL as the non-TTY fallback. Each message is a gated task run, streamed live, with per-turn summaries, `/help`, `/verify <0-5>` (6 formal = unsupported), and `/exit`.
 
 ### 5.10 Defined-but-unused events
 `AgentForked`, `AgentMerged`, `CheckpointCreated` exist in the contracts but have no producers. They're a placeholder for the multi-agent future, not a current feature.
@@ -254,6 +254,6 @@ The only remaining **launch gate** is the real-model proof (phase 9's clean **20
 | Benchmarking (A/B any config, dry-run, sleep-cycle) | ✅ Working |
 | Resilience (resume, backoff, Docker sandbox) | ✅ Resume (incl. container), backoff, container sandbox e2e |
 | Breadth (tools, skills, cross-repo memory) | ⚠️ Tools + skills shipped; cross-repo memory remains |
-| Feel (streaming, interactive mode) | ✅ Streaming + `guppy chat` |
+| Feel (streaming, interactive mode) | ✅ Streaming + `guppy chat` (REPL + fullscreen TUI) |
 | Merge-back (success lands in your repo) | ✅ commit+merge / mirror, `--keep-worktree`, `--no-commit` |
 | Context health (token savings) | ✅ ContextOps bridge + report + CLI |

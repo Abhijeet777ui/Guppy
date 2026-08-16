@@ -15,25 +15,26 @@
     "start": "node dist/cli.js"
   },
   "dependencies": {
-    "@guppy/contracts": "workspace:*",
-    "@guppy/event-store": "workspace:*",
-    "@guppy/core": "workspace:*",
-    "@guppy/agent-runtime": "workspace:*",
-    "@guppy/workspace": "workspace:*",
-    "@guppy/context-engine": "workspace:*",
-    "@guppy/verification-engine": "workspace:*",
-    "@guppy/memory": "workspace:*",
-    "@guppy/bench-runner": "workspace:*",
-    "@guppy/models": "workspace:*",
     "@earendil-works/pi-ai": "^0.84.1",
-    "commander": "^12.0.0",
-    "chalk": "^5.3.0"
+    "@earendil-works/pi-tui": "^0.84.2",
+    "@guppy/agent-runtime": "workspace:*",
+    "@guppy/bench-runner": "workspace:*",
+    "@guppy/context-engine": "workspace:*",
+    "@guppy/contracts": "workspace:*",
+    "@guppy/core": "workspace:*",
+    "@guppy/event-store": "workspace:*",
+    "@guppy/memory": "workspace:*",
+    "@guppy/models": "workspace:*",
+    "@guppy/verification-engine": "workspace:*",
+    "@guppy/workspace": "workspace:*",
+    "chalk": "^5.3.0",
+    "commander": "^12.0.0"
   },
   "devDependencies": {
-    "typescript": "^5.5.0",
-    "vitest": "^2.0.0",
     "@biomejs/biome": "^1.8.0",
-    "@types/node": "^22.0.0"
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
   },
   "type": "module"
 }

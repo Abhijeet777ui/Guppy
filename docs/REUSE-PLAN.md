@@ -1,9 +1,9 @@
 # Prime / Pi Reuse Plan — completing Guppy's interface
 
-**Status:** Slice 0 + Slice 1 done (model catalog + `/models` + thinking passthrough) · **Branch:** `feature/nexus` · **Date:** 2026-08-16
+**Status:** Slices 0–3 done (model catalog + `/models` + thinking + config wizard + TUI) · next: MCP (Slice 2) · **Branch:** `feature/nexus` · **Date:** 2026-08-16
 
 Guppy's core (loop, verification ladder, memory, sandbox, model client) is
-launched and verified (20/20 free-tier bench, 139 tests, CI green). This plan
+launched and verified (20/20 free-tier bench, 182 tests, CI green). This plan
 covers the **product layer** — interface, model selection, external tools,
 modes, skills — by **reusing the prime-agent / pi-ai source we already have**
 instead of reimplementing it.
@@ -36,7 +36,7 @@ Reach feature parity with opencode / Claude Code / prime-agent for the
 | Package | License | What it is |
 |---|---|---|
 | `@earendil-works/pi-ai` (npm 0.84.2) | MIT | Full model library: generated model registry (`models.generated.ts`), `models.ts` registry API, providers (openai, anthropic, google/vertex, mistral, deepseek, xai, groq, openrouter, bedrock, azure, cloudflare, codex), thinking options per provider (`AnthropicThinkingDisplay`, `GoogleThinkingLevel`, …), MCP (catalog + OAuth), streaming, cache pricing, typebox schemas, `register-builtins`. |
-| `@earendil-works/pi-tui` (npm 0.7.1) | MIT | Minimal TUI framework: `TUI`, `Input`, `Editor`, `Markdown`, `SelectList`, `SettingsList`, `Loader`, `Box`, `Container`, `Image`; differential rendering, CSI-2026 sync, bracketed paste, slash-command autocomplete, themes. |
+| `@earendil-works/pi-tui` (npm 0.84.2) | MIT | Terminal UI framework: `TuiAltScreen`/`TuiMainScreen` renderers, `Input`, `SelectList`, `Text`, `VStack`/`HStack`, `ScrollView`, overlays; differential rendering, CSI-2026 sync, bracketed paste, mouse scrolling. |
 | `@earendil-works/pi-coding-agent` | MIT | Agent CLI internals we mine selectively: built-in skills dir + config, background planning pass with review/approve statuses, `--autonomous-gate*` flags. |
 | `prime-agent` (top-level) | — | Aggregator monorepo (agent/ai/coding-agent/tui). No license field; individual packages carry MIT. |
 
@@ -77,7 +77,8 @@ Each slice is a reviewable unit on `feature/nexus` (sub-branches for large ones)
 ### Slice 0 — Foundation ✅ (partial)
 - ✅ `pi-ai` (pinned) dep + `NOTICE` with MIT provenance.
 - ✅ `@guppy/models` package wired into the workspace with real tests.
-- ⏳ `pi-tui` dep + `@guppy/mcp` skeleton — deferred to Slices 2/3.
+- ✅ `pi-tui` dep (0.84.2) + NOTICE entry — landed with Slice 3.
+- ⏳ `@guppy/mcp` skeleton — deferred to Slice 2.
 - ✅ Adapter smoke: `pi-ai` registry loads; catalog queries return metadata (23 tests).
 
 ### Slice 1 — Model catalog + thinking levels ✅ done
@@ -91,10 +92,10 @@ Each slice is a reviewable unit on `feature/nexus` (sub-branches for large ones)
 - `guppy mcp add/list/remove` + config file.
 - Tests: in-process mock MCP server → tool call → result (hermetic, like the existing tool tests).
 
-### Slice 3 — TUI (4–7 days)
-- `apps/guppy-tui` on `pi-tui`: chat pane (streaming via `EventStore.subscribe`), input line with slash autocomplete, `/models` `SelectList`, settings pane, plan/build indicator.
-- `guppy chat --tui` (default when TTY); readline remains.
-- Tests: component-level (renders events, handles keys) — headless where possible; manual TUI QA checklist.
+### Slice 3 — TUI ✅ done
+- `apps/control-plane/src/tui.ts` on `pi-tui` (`TuiAltScreen`): scrollable transcript (streaming via `EventStore.subscribe` → `renderLiveEvent`), input dock, status line, `/models` `SelectList` overlay with type-ahead filtering.
+- `guppy chat --tui` (default when TTY); readline REPL remains the non-TTY / `--no-tui` fallback. Shared runtime/session lifecycle extracted into `createChatEngine` so REPL and TUI can't drift.
+- Tests: pure TUI logic (transcript buffer, picker items, status line, token formatting) unit-tested without a TTY; the interactive surface is verified by build + manual QA.
 
 ### Slice 4 — Plan / build modes (2–3 days)
 - `guppy run --plan` and `guppy chat` `/plan` `/build`: plan phase = research + write a plan (no src edits), plan gate (structure/coverage check), approval (TUI confirm), then build phase reuses the existing loop + verification ladder.
@@ -148,7 +149,7 @@ Merge to `main` only per slice, each with green tests + CI.
 
 `guppy chat` in a TTY gives you:
 
-- [ ] A real TUI: streaming chat pane, input with slash autocomplete, no flicker.
+- [x] A real TUI: streaming chat pane, input dock, status line, `/models` `SelectList` picker (pi-tui, MIT — attributed).
 - [x] `/models` — searchable catalog of models with cost/context/reasoning metadata; `/provider` presets (OpenRouter, Groq, Gemini, OpenAI, Ollama, …).
 - [x] Model selection persisted per user (`~/.guppy/config.json`); keys from env or wizard (`guppy setup` / `guppy config set`).
 - [x] Thinking/reasoning-level control for models that support it — `--thinking <level>` on run/chat and `/thinking [level]` in chat, mapped via `selectModel` → `extraBody`.

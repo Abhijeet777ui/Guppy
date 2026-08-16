@@ -10,6 +10,7 @@ A next-gen agent harness for long-horizon software engineering. Instead of just 
 - **Docker sandbox** — the default launch mode, with path containment (including symlink defense) and container lifecycle management; local mode available via `--local`.
 - **Event store** — append-only msgpack trajectories with a SQLite index, replay, trace, and live streaming.
 - **Model catalog** — browse 39 providers / 1,220 models (`guppy models`, `guppy providers`) and pick one inside chat (`/models`, `/provider`, `/model`), with per-model cost/context/reasoning metadata and thinking-level passthrough.
+- **Fullscreen TUI** — `guppy chat` opens a fullscreen terminal interface on a TTY (scrollable transcript, input dock, status line, `/models` picker with type-ahead), with the readline REPL as the non-TTY / `--no-tui` fallback.
 
 ## Quick start
 
@@ -18,13 +19,14 @@ Requirements: Node ≥ 20, pnpm 11, and Docker Desktop (for the sandbox default)
 ```bash
 pnpm install
 pnpm build
-pnpm test        # 173 tests across 11 suites
+pnpm test        # 182 tests across 11 suites
 
 # Store your provider key in ~/.guppy/config.json (interactive wizard),
 # or script it: `pnpm cli -- config set groq <key> --default-model qwen/qwen3.6-27b`
 pnpm cli -- setup
 
-# Interactive chat (key comes from config, or OPENROUTER_API_KEY etc. in the env)
+# Interactive chat — fullscreen TUI on a terminal, readline REPL when piped
+# (key comes from config, or OPENROUTER_API_KEY etc. in the env)
 pnpm cli -- chat
 
 # Browse the model catalog (no key needed)
