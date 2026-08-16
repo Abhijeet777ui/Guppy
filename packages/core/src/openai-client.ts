@@ -113,6 +113,7 @@ export class OpenAIChatClient {
     if (apiKey) headers['authorization'] = `Bearer ${apiKey}`;
 
     const body: Record<string, unknown> = {
+      ...this.config.extraBody,
       model: this.config.model,
       messages: normalizeMessages(messages),
     };
@@ -192,6 +193,7 @@ export class OpenAIChatClient {
     if (apiKey) headers['authorization'] = `Bearer ${apiKey}`;
 
     const body: Record<string, unknown> = {
+      ...this.config.extraBody,
       model: this.config.model,
       messages: normalizeMessages(messages),
       stream: true,

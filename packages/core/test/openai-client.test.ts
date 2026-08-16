@@ -165,6 +165,32 @@ describe('OpenAIChatClient', () => {
     }
   });
 
+  it('merges extraBody fields into the request without overriding reserved keys', async () => {
+    const { server, requests } = startMock(200, {
+      model: 'fake/reasoner',
+      choices: [{ message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 3, completion_tokens: 1 },
+    });
+    const url = await listen(server);
+    try {
+      const client = new OpenAIChatClient({
+        provider: 'fake',
+        model: 'fake/reasoner',
+        baseUrl: url,
+        extraBody: { reasoning_effort: 'high', model: 'fake/must-not-win' },
+      });
+
+      await client.complete([{ role: 'user', content: 'hi' }]);
+
+      const body = requests[0]!.body;
+      expect(body.reasoning_effort).toBe('high');
+      // Reserved keys are emitted by the client after extraBody, so they win.
+      expect(body.model).toBe('fake/reasoner');
+    } finally {
+      await close(server);
+    }
+  });
+
   it('returns text content when the model answers directly', async () => {
     const { server } = startMock(200, {
       model: 'fake/nemotron',

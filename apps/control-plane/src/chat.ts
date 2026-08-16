@@ -28,6 +28,8 @@ import { ContextEngine } from '@guppy/context-engine';
 import { createVerificationEngine } from '@guppy/verification-engine';
 import { createPiAdapter, createPrimeDaemonRuntime } from '@guppy/agent-runtime';
 import { createCoreRuntime } from '@guppy/core';
+import type { ModelConfig } from '@guppy/core';
+import { describeModel, listModels, listProviders, selectModel } from '@guppy/models';
 import type { Model } from '@earendil-works/pi-ai';
 import { createSessionManager, type SessionManager } from './session-manager.js';
 import { attachLiveStream } from './live-stream.js';
@@ -213,23 +215,27 @@ export async function runChat(options: ChatOptions): Promise<void> {
     projectRoot: repoPath,
     timeout: 300_000,
   });
-  const agentRuntime = buildAgentRuntime(options, eventStore, workspaceManager);
-  const sessionManager = createSessionManager({
-    repoPath,
-    agentRuntime,
-    contextEngine,
-    verificationEngine,
-    eventStore,
-    // Pass the same (local-mode) workspace manager the verification engine
-    // uses — otherwise the session manager silently creates a second manager
-    // with Docker defaults and `--local` stops working.
-    workspaceManager,
-    keepWorktree: options.keepWorktree,
-    ...(options.commitMessage ? { commitMessage: options.commitMessage } : {}),
-    ...(options.noCommit ? { noCommit: true } : {}),
-    ...(options.force ? { force: true } : {}),
-    maxTurns: options.maxTurns,
-  });
+  /** Build a session manager over the current runtime (reused on /model switch). */
+  const createSession = (): SessionManager =>
+    createSessionManager({
+      repoPath,
+      agentRuntime,
+      contextEngine,
+      verificationEngine,
+      eventStore,
+      // Pass the same (local-mode) workspace manager the verification engine
+      // uses — otherwise the session manager silently creates a second manager
+      // with Docker defaults and `--local` stops working.
+      workspaceManager,
+      keepWorktree: options.keepWorktree,
+      ...(options.commitMessage ? { commitMessage: options.commitMessage } : {}),
+      ...(options.noCommit ? { noCommit: true } : {}),
+      ...(options.force ? { force: true } : {}),
+      maxTurns: options.maxTurns,
+    });
+
+  let agentRuntime = buildAgentRuntime(options, eventStore, workspaceManager);
+  let sessionManager = createSession();
 
   const input = options.input ?? process.stdin;
   const output = options.output ?? process.stdout;
@@ -240,6 +246,76 @@ export async function runChat(options: ChatOptions): Promise<void> {
   let verificationLevel = options.verificationLevel;
   let shuttingDown = false;
   let busy = false;
+
+  // -------------------------------------------------------------------------
+  // Model catalog commands (/models, /provider, /model)
+  // -------------------------------------------------------------------------
+
+  let activeProvider: string | undefined = options.provider;
+
+  /** Compact token counts: 131072 → "131k", 1048576 → "1.0M". */
+  const compactTokens = (n: number): string =>
+    n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`;
+
+  const printProviders = (): void => {
+    const providers = listProviders();
+    const compatible = providers.filter((p) => p.coreCompatibleCount > 0).length;
+    console.log(
+      chalk.gray(
+        `  ${providers.length} providers — ${compatible} serve OpenAI-compatible models (usable by the core runtime):`,
+      ),
+    );
+    for (const p of providers) {
+      const tag = p.coreCompatibleCount > 0 ? chalk.green('core') : chalk.gray('native');
+      console.log(
+        chalk.gray(
+          `    ${p.id.padEnd(24)} ${p.name.padEnd(22)} ${String(p.modelCount).padStart(4)} models  [${tag}]`,
+        ),
+      );
+    }
+    console.log(chalk.gray('  Use /provider <id> to filter, then /models to browse.'));
+  };
+
+  const printModels = (query?: string): void => {
+    const models = listModels({
+      ...(activeProvider ? { provider: activeProvider } : {}),
+      ...(query ? { query } : {}),
+      coreCompatibleOnly: true,
+      limit: 30,
+    });
+    const scope = activeProvider ? ` (provider ${activeProvider})` : '';
+    console.log(
+      chalk.gray(
+        `  ${models.length} core-compatible model(s)${scope}${query ? ` matching "${query}"` : ''}:`,
+      ),
+    );
+    for (const m of models) {
+      console.log(
+        chalk.gray(
+          `    ${m.provider.padEnd(12)} ${m.id}  ctx ${compactTokens(m.contextWindow)}  max ${compactTokens(m.maxTokens)}${m.reasoning ? '  reasoning' : ''}`,
+        ),
+      );
+    }
+    if (models.length >= 30) console.log(chalk.gray('    … use /models <query> to narrow further'));
+    console.log(
+      chalk.gray(
+        '  Native-only models (Anthropic / Gemini / OpenAI-responses) need an adapter — see `guppy models`.',
+      ),
+    );
+  };
+
+  /** Swap the active model: rebuild runtime + session while keeping memory/events. */
+  async function rebuildRuntime(next: ModelConfig): Promise<void> {
+    await agentRuntime.shutdown();
+    options.model = next.model;
+    options.provider = next.provider;
+    if (next.baseUrl !== undefined) options.baseUrl = next.baseUrl;
+    else delete options.baseUrl;
+    if (next.apiKey !== undefined) options.apiKey = next.apiKey;
+    else delete options.apiKey;
+    agentRuntime = buildAgentRuntime(options, eventStore, workspaceManager);
+    sessionManager = createSession();
+  }
 
   /** Prompt unless the REPL is already shutting down (rl.prompt() throws after close). */
   const prompt = (): void => {
@@ -266,6 +342,9 @@ export async function runChat(options: ChatOptions): Promise<void> {
 
   const printHelp = (): void => {
     console.log(chalk.gray('  /help              show this help'));
+    console.log(chalk.gray('  /models [query]    list core-compatible models (search by id/name)'));
+    console.log(chalk.gray('  /provider [id]     list providers, or set the active provider'));
+    console.log(chalk.gray('  /model <id>        switch the active model mid-session'));
     console.log(chalk.gray('  /verify <level>    set the verification level (0-5; 6 formal = unsupported)'));
     console.log(chalk.gray('  /exit, /quit       leave the chat'));
     console.log(chalk.gray('  anything else      run it as a task through the gated agent loop'));
@@ -307,7 +386,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
       `  Runtime: ${options.runtime}  Model: ${options.model}  Verification: ${verificationLevel}  Max turns: ${options.maxTurns}`,
     ),
   );
-  console.log(chalk.gray('  Commands: /help  /verify <0-5>  /exit'));
+  console.log(chalk.gray('  Commands: /help  /models  /provider  /model  /verify <0-5>  /exit'));
   rl.prompt();
 
   rl.on('line', (line) => {
@@ -334,6 +413,75 @@ export async function runChat(options: ChatOptions): Promise<void> {
         console.log(chalk.yellow('  Usage: /verify <level 0-5> (level 6 formal verification is unsupported)'));
       }
       prompt();
+      return;
+    }
+    if (userInput === '/models' || userInput.startsWith('/models ')) {
+      printModels(userInput.slice('/models '.length).trim() || undefined);
+      prompt();
+      return;
+    }
+    if (userInput === '/provider' || userInput.startsWith('/provider ')) {
+      const id = userInput.slice('/provider '.length).trim();
+      if (!id) {
+        printProviders();
+      } else {
+        const provider = listProviders().find((p) => p.id === id);
+        if (!provider) {
+          console.log(chalk.yellow(`  Unknown provider: ${id}`));
+        } else {
+          activeProvider = id;
+          console.log(
+            chalk.gray(
+              `  Provider set to ${id} (${provider.name}) — ${provider.coreCompatibleCount}/${provider.modelCount} models are core-compatible.`,
+            ),
+          );
+        }
+      }
+      prompt();
+      return;
+    }
+    if (userInput.startsWith('/model ')) {
+      const id = userInput.slice('/model '.length).trim();
+      if (!id) {
+        console.log(chalk.yellow('  Usage: /model <model-id>'));
+        prompt();
+        return;
+      }
+      if (busy) {
+        console.log(chalk.yellow('  Still working — wait for the current turn to finish before switching models.'));
+        prompt();
+        return;
+      }
+      const next = selectModel({ model: id, ...(activeProvider ? { provider: activeProvider } : {}) });
+      if (!next) {
+        console.log(
+          chalk.yellow(
+            `  No model "${id}" found${activeProvider ? ` in provider ${activeProvider}` : ''}. Use /models to search.`,
+          ),
+        );
+        prompt();
+        return;
+      }
+      busy = true;
+      void (async () => {
+        try {
+          await rebuildRuntime(next);
+          const desc = describeModel(next.provider, next.model);
+          console.log(chalk.green(`  Model set to ${next.provider}/${next.model}`));
+          if (desc) {
+            console.log(
+              chalk.gray(
+                `    Context ${compactTokens(desc.contextWindow)}  Max output ${compactTokens(desc.maxTokens)}${desc.reasoning ? '  Reasoning' : ''}`,
+              ),
+            );
+          }
+        } catch (e) {
+          console.error(chalk.red(`  Could not switch model: ${e instanceof Error ? e.message : String(e)}`));
+        } finally {
+          busy = false;
+          if (!shuttingDown) prompt();
+        }
+      })();
       return;
     }
     if (userInput.startsWith('/')) {

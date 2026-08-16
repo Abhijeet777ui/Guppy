@@ -10,6 +10,7 @@ import { createEventStore } from '@guppy/event-store';
 import { createWorkspaceManager } from '@guppy/workspace';
 import { ContextEngine, loadSkills, saveSkill } from '@guppy/context-engine';
 import { createVerificationEngine } from '@guppy/verification-engine';
+import { listModels, listProviders } from '@guppy/models';
 import {
   ALL_CONFIGS,
   attachContextHealth,
@@ -537,6 +538,49 @@ program
       done += ` | Tokens saved (${tool}, est.): ${saved}`;
     }
     console.log(chalk.bold(done));
+  });
+
+program
+  .command('providers')
+  .description('List model providers from the built-in catalog')
+  .action(() => {
+    const providers = listProviders();
+    console.log(chalk.blue(`[Guppy] ${providers.length} providers:`));
+    for (const p of providers) {
+      const tag = p.coreCompatibleCount > 0 ? 'core-compatible' : 'native-only';
+      console.log(
+        chalk.gray(
+          `  ${p.id.padEnd(24)} ${p.name.padEnd(22)} ${String(p.modelCount).padStart(4)} models  ${p.coreCompatibleCount} core  [${tag}]`,
+        ),
+      );
+    }
+    console.log(
+      chalk.gray('  "core-compatible" = OpenAI-compatible chat completions, usable by `guppy run` / `guppy chat`. Native-only providers need an adapter.'),
+    );
+  });
+
+program
+  .command('models [query]')
+  .description('List models from the built-in catalog (search by id/name)')
+  .option('--provider <id>', 'Filter by provider id (e.g. groq, openrouter)')
+  .option('--compatible', 'Only OpenAI-compatible models (usable by the core runtime)')
+  .option('--limit <n>', 'Max results', '40')
+  .action((query: string | undefined, options: { provider?: string; compatible?: boolean; limit: string }) => {
+    const models = listModels({
+      ...(options.provider ? { provider: options.provider } : {}),
+      ...(query ? { query } : {}),
+      ...(options.compatible ? { coreCompatibleOnly: true } : {}),
+      limit: parseInt(options.limit, 10) || 40,
+    });
+    console.log(chalk.blue(`[Guppy] ${models.length} model(s):`));
+    for (const m of models) {
+      const tag = m.coreCompatible ? chalk.green('core') : chalk.gray('native');
+      console.log(
+        chalk.gray(
+          `  ${m.provider.padEnd(12)} ${m.id}  ctx ${m.contextWindow}  max ${m.maxTokens}${m.reasoning ? '  reasoning' : ''}  [${tag}]`,
+        ),
+      );
+    }
   });
 
 program.parse();

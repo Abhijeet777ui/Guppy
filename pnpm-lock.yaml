@@ -90,6 +90,9 @@ importers:
       '@guppy/memory':
         specifier: workspace:*
         version: link:../../packages/memory
+      '@guppy/models':
+        specifier: workspace:*
+        version: link:../../packages/models
       '@guppy/verification-engine':
         specifier: workspace:*
         version: link:../../packages/verification-engine
@@ -274,6 +277,28 @@ importers:
       '@biomejs/biome':
         specifier: ^1.8.0
         version: 1.9.4
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.0.0
+        version: 2.1.9(@types/node@22.0.0)
+
+  packages/models:
+    dependencies:
+      '@earendil-works/pi-ai':
+        specifier: ^0.84.1
+        version: 0.84.1(ws@8.21.3)(zod@4.4.3)
+      '@guppy/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@biomejs/biome':
+        specifier: ^1.8.0
+        version: 1.9.4
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.0.0
       typescript:
         specifier: ^5.5.0
         version: 5.9.3

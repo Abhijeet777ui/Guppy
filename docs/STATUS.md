@@ -11,11 +11,12 @@
 Every claim below was checked against the current tree, not memory:
 
 - **Build:** `pnpm -r run build` — green across all 11 workspace projects.
-- **Tests:** `pnpm -r run test` (root `pnpm test`) — green end-to-end; 139 tests across 10 suites (only `contracts` passes via `--passWithNoTests`):
+- **Tests:** `pnpm -r run test` (root `pnpm test`) — green end-to-end; 163 tests across 11 suites (only `contracts` passes via `--passWithNoTests`):
 
   | Suite | Tests | Covers |
   |---|---|---|
-  | `@guppy/core` | 28 | OpenAI client (request shape, auth, errors, fenced-JSON + `<function/name>` text-tool-call fallbacks, assistant `tool_calls.type` normalization, streaming SSE, backoff, per-request timeout, sliding-window rate limiter), full core tool loop E2E, rich tools (search/apply_patch/git) |
+  | `@guppy/core` | 29 | OpenAI client (request shape, auth, errors, fenced-JSON + `<function/name>` text-tool-call fallbacks, assistant `tool_calls.type` normalization, streaming SSE, backoff, per-request timeout, sliding-window rate limiter, `extraBody` passthrough), full core tool loop E2E, rich tools (search/apply_patch/git) |
+  | `@guppy/models` | 23 | pi-ai catalog facade (providers/models/search, core-compatible filter), catalog → `ModelConfig` mapping, thinking/reasoning passthrough (per-provider shapes) |
   | `@guppy/workspace` | 7 | unified-diff parser + fuzzy hunk applier, symlink path containment |
   | `@guppy/agent-runtime` | 3 | prime-agent spawn → JSONL framing → parse → events E2E; non-zero exit; missing binary |
   | `@guppy/verification-engine` | 9 | level commands, output parsers (incl. real-eslint stylish), escalation |
@@ -48,6 +49,7 @@ packages/
   memory/             300 lines   Trajectory distillation → fixes, scored retrieval
   agent-runtime/     1235 lines   AgentRuntime iface + PrimeDaemonRuntime + PiAgentRuntime (quarantined)
   core/               737 lines   Guppy-native model client + tool loop (the default brain)
+  models/             342 lines   pi-ai catalog facade → ModelConfig + thinking passthrough (pi-ai confined here)
 
 apps/
   control-plane/      685 lines   `guppy` CLI: run / chat / replay / trace / benchmark; SessionManager + live-stream
@@ -55,14 +57,14 @@ apps/
   sleep-cycle/        437 lines   Offline failure clustering + report + memory curation
 ```
 
-The only pi/prime coupling left is `agent-runtime` (both adapters are opt-in behind `--runtime prime|pi`) and a type-only `Model` import used by those opt-in paths. The default path — `guppy run --runtime core` — has **zero** pi/prime dependencies.
+pi/prime code is confined to `agent-runtime` (both adapters opt-in behind `--runtime prime|pi`) and `models` (the pi-ai *catalog*, used as a published MIT dependency and attributed in NOTICE). The default runtime — `guppy run --runtime core` — depends on neither, and `@guppy/core` itself remains pi/prime-free.
 
 ---
 
 ## 3. What works (verified)
 
 ### 3.1 The standalone core loop (`@guppy/core`)
-- `ModelConfig` with provider → env-var key resolution (`openai`, `openrouter`, `nvidia`, `prime`, `anthropic`).
+- `ModelConfig` with provider → env-var key resolution (`openai`, `openrouter`, `nvidia`, `prime`, `anthropic`, `groq`, `google`, `deepseek`, `mistral`, `xai`, `cerebras`, `together`, `fireworks`) and an `extraBody` passthrough for provider-specific request fields (reasoning/thinking toggles).
 - `OpenAIChatClient.complete()` over raw `fetch` to any `/chat/completions` endpoint: messages + tool definitions, native `tool_calls` parsing, **fenced-JSON tool-call fallback** (needed for qwen2.5-coder, which answers tool requests as JSON text), token usage, descriptive HTTP errors.
 - `CoreAgentRuntime` implements `AgentRuntime`: builds a system prompt from selected context (files, test results, errors, memories, skills), loops model ↔ tools up to `maxTurns`, emits `TaskStarted / ModelCalled / ToolCalled / ToolReturned / FileChanged / TrajectoryCompleted`, accumulates token/tool metrics, maps completion to `success | partial | failure`.
 - Tools: `search` (ripgrep-backed with a substring fallback), `read_file`, `write_file`, `apply_patch` (diff-aware, emits one `FileChanged` per file), `list_files`, `run_command`, `git_status`, `git_diff` — all through `WorkspaceManager`, so path containment is enforced at one choke point.
@@ -120,10 +122,13 @@ The only pi/prime coupling left is `agent-runtime` (both adapters are opt-in beh
 `EventStore.subscribe()` — a listener hook on the single funnel every runtime and the verification engine write to — plus a `live-stream.ts` renderer for all 18 event types (`[task]`, `[model]`, `[tool]`, `[gate]`, `[ckpt]`, …). Default-on in `guppy run` and `guppy chat`; `-q/--quiet` restores summary-only output. Listeners fire synchronously after persist and a throwing listener is caught + logged, so rendering can never break a run.
 
 ### 3.12 Interactive chat (`guppy chat`)
-A REPL over the same SessionManager loop: each message is a gated task run (verify → retry → memory), streamed live, with per-turn summaries (outcome, duration, tokens, tool calls, tests) and `/help`, `/verify <0-5>` (6 formal = unsupported), `/exit`. Shares `buildAgentRuntime` with `run`; guarded so `/exit` or EOF mid-turn defers shutdown until the turn lands (regression-tested).
+A REPL over the same SessionManager loop: each message is a gated task run (verify → retry → memory), streamed live, with per-turn summaries (outcome, duration, tokens, tool calls, tests) and slash commands — `/help`, `/models [query]` (browse core-compatible models), `/provider [id]` (list/set provider), `/model <id>` (switch model mid-session by rebuilding the runtime), `/verify <0-5>` (6 formal = unsupported), `/exit`. Shares `buildAgentRuntime` with `run`; guarded so `/exit` or EOF mid-turn defers shutdown until the turn lands (regression-tested).
 
 ### 3.13 Worktree merge-back
 On success the agent's changes land in the source repo: git repos get a `commit + merge` (inline Guppy author, your git identity untouched) and the worktree branch is removed; non-git repos get a file mirror including deletions. `--keep-worktree` opts out on either outcome, `--commit-message <template>` (with `{task}`) customizes the commit, and `--no-commit` overlays files with no git history. Failed merges keep the worktree and print its path; `--resume` merges back too.
+
+### 3.14 Model catalog & selection (`@guppy/models`)
+A lazy facade over the pi-ai built-in registry (MIT, attributed in NOTICE): `listProviders()` / `listModels()` (search + core-compatibility filter) / `findModel()` / `describeModel()`, plus `selectModel()` / `toModelConfig()` which map a catalog entry into Guppy's own `ModelConfig` — including `buildThinkingBody()`, which emits the per-provider reasoning/thinking request fields pi-ai would send (OpenRouter `reasoning.effort`, DeepSeek `thinking`, OpenAI `reasoning_effort`, …) via `ModelConfig.extraBody`. pi-ai types are confined to this package. Exposed as `guppy models [query]` / `guppy providers` and the chat `/models` `/provider` `/model` commands. `core-compatible` = `openai-completions` API (what the core client can drive); native-only providers (Anthropic, Gemini, OpenAI-responses) are listed but flagged as needing an adapter.
 
 ---
 

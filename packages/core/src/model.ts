@@ -40,6 +40,14 @@ export interface ModelConfig {
    * RPM caps are respected instead of tripped. Unset (or 0) disables pacing.
    */
   requestsPerMinute?: number;
+  /**
+   * Extra request-body fields merged into every chat completion request
+   * (provider-specific knobs such as reasoning/thinking toggles). Reserved
+   * keys — model, messages, tools, tool_choice, max_tokens, temperature,
+   * stream, stream_options — are always emitted by the client after this map
+   * and therefore cannot be overridden.
+   */
+  extraBody?: Record<string, unknown>;
 }
 
 /**
@@ -53,6 +61,14 @@ const PROVIDER_API_KEY_ENV: Record<string, string> = {
   nim: 'NVIDIA_API_KEY',
   prime: 'PRIME_API_KEY',
   anthropic: 'ANTHROPIC_API_KEY',
+  groq: 'GROQ_API_KEY',
+  google: 'GEMINI_API_KEY',
+  deepseek: 'DEEPSEEK_API_KEY',
+  mistral: 'MISTRAL_API_KEY',
+  xai: 'XAI_API_KEY',
+  cerebras: 'CEREBRAS_API_KEY',
+  together: 'TOGETHER_API_KEY',
+  fireworks: 'FIREWORKS_API_KEY',
 };
 
 const DEFAULT_BASE_URL = 'https://api.openai.com/v1';

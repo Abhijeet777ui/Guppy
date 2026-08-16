@@ -9,6 +9,7 @@ A next-gen agent harness for long-horizon software engineering. Instead of just 
 - **Benchmark harness** (`@guppy/bench-runner`) — a hermetic 20-fixture suite plus A/B configs (`core` vs `prime` vs `pi`), `--dry-run`, `loop-demo`, and offline failure clustering (`sleep-cycle`).
 - **Docker sandbox** — the default launch mode, with path containment (including symlink defense) and container lifecycle management; local mode available via `--local`.
 - **Event store** — append-only msgpack trajectories with a SQLite index, replay, trace, and live streaming.
+- **Model catalog** — browse 39 providers / 1,220 models (`guppy models`, `guppy providers`) and pick one inside chat (`/models`, `/provider`, `/model`), with per-model cost/context/reasoning metadata and thinking-level passthrough.
 
 ## Quick start
 
@@ -17,7 +18,7 @@ Requirements: Node ≥ 20, pnpm 11, and Docker Desktop (for the sandbox default)
 ```bash
 pnpm install
 pnpm build
-pnpm test        # 139 tests across 10 suites
+pnpm test        # 163 tests across 11 suites
 
 # Interactive chat (needs a model key in the environment)
 GUPPY_MODEL_PROVIDER=openrouter \

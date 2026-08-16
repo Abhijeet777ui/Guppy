@@ -1,0 +1,81 @@
+Guppy
+=====
+
+Copyright 2026 Abhijeet Baug
+
+Guppy is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This product includes software developed by third parties. Their licenses and
+copyright notices are reproduced below. Guppy reuses these as published npm
+dependencies (with their original copyright/license headers intact); nothing
+is copied into Guppy's own source without attribution.
+
+---
+
+@earendil-works/pi-ai
+---------------------
+
+Used by the @guppy/models package as the model catalog and provider/thinking
+metadata source. Distributed as a published npm dependency (not vendored).
+
+  Repository: https://github.com/earendil-works/pi (packages/ai)
+  License:    MIT
+  Author:     Mario Zechner
+
+MIT License
+
+Copyright (c) 2025 Mario Zechner
+Copyright (c) 2026 Prime Intellect
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+@earendil-works/pi-agent-core
+-----------------------------
+
+Used by the @guppy/agent-runtime package as an opt-in A/B baseline adapter
+(the `pi` runtime). Distributed as a published npm dependency.
+
+  Repository: https://github.com/earendil-works/pi
+  License:    MIT
+  Author:     Mario Zechner
+
+MIT License
+
+Copyright (c) 2025 Mario Zechner
+Copyright (c) 2026 Prime Intellect
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

@@ -1,6 +1,6 @@
 # Prime / Pi Reuse Plan — completing Guppy's interface
 
-**Status:** plan · **Branch:** `feature/nexus` · **Date:** 2026-08-16
+**Status:** Slice 0 + Slice 1 done (model catalog + `/models` + thinking passthrough) · **Branch:** `feature/nexus` · **Date:** 2026-08-16
 
 Guppy's core (loop, verification ladder, memory, sandbox, model client) is
 launched and verified (20/20 free-tier bench, 139 tests, CI green). This plan
@@ -74,16 +74,17 @@ apps/guppy-tui          pi-tui UI: chat panes, /models picker, settings, plan/bu
 
 Each slice is a reviewable unit on `feature/nexus` (sub-branches for large ones), with tests, and must keep the full suite green.
 
-### Slice 0 — Foundation (0.5–1 day)
-- Add `pi-ai` (pinned) + `pi-tui` deps to the workspace; add `NOTICE` with MIT provenance.
-- Skeleton `@guppy/models` + `@guppy/mcp` packages (empty, wired into workspace, `--passWithNoTests` off — real tests from slice 1).
-- Adapter smoke test: `pi-ai` registry loads, one catalog query returns metadata.
+### Slice 0 — Foundation ✅ (partial)
+- ✅ `pi-ai` (pinned) dep + `NOTICE` with MIT provenance.
+- ✅ `@guppy/models` package wired into the workspace with real tests.
+- ⏳ `pi-tui` dep + `@guppy/mcp` skeleton — deferred to Slices 2/3.
+- ✅ Adapter smoke: `pi-ai` registry loads; catalog queries return metadata (23 tests).
 
-### Slice 1 — Model catalog + thinking levels (2–4 days)
-- `@guppy/models`: query catalog by provider/family/capability; list models for `/models`; build `ModelConfig` from a selection (incl. `reasoningEffort`/`thinkingLevel`).
-- `OpenAIChatClient`: pass through optional thinking fields (backward compatible; default unchanged).
-- `guppy chat` `/models` + `/provider` commands (readline first; TUI in slice 3).
-- Tests: catalog queries, config mapping, thinking-field passthrough.
+### Slice 1 — Model catalog + thinking levels ✅ done
+- ✅ `@guppy/models`: catalog query by provider/query, core-compatible filter, `ModelConfig` mapping (`selectModel`/`toModelConfig`).
+- ✅ `OpenAIChatClient`: `ModelConfig.extraBody` passthrough (backward compatible; default unchanged).
+- ✅ `guppy chat` `/models` + `/provider` + `/model` (readline first; TUI in slice 3) and `guppy models` / `guppy providers` CLI commands.
+- ✅ Tests: 23 in `@guppy/models` + 1 `extraBody` test in core; full suite 163 green.
 
 ### Slice 2 — MCP (3–5 days)
 - `@guppy/mcp`: connect servers from config (`mcpServers`), list tools, convert to `GuppyTool[]`, execute through `WorkspaceManager`, respect containment.
