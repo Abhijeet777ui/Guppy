@@ -220,6 +220,20 @@ export function runTui(options: ChatOptions): Promise<void> {
         coreCompatibleOnly: true,
         limit: 200,
       });
+      if (models.length === 0) {
+        transcript.append(
+          chalk.yellow(
+            `No models match${query ? ` "${query}"` : ''}. Try /models with a different term, or /provider to pick a provider first.`,
+          ),
+        );
+        tui.requestRender();
+        return;
+      }
+      transcript.append(
+        chalk.gray(
+          `Model picker (${models.length} shown) — type to filter, ↑/↓ to move, Enter to switch, Esc to close.`,
+        ),
+      );
       const list = new SelectList(buildModelItems(models), 12, selectListTheme());
       list.onSelect = (item) => {
         const id = item.value;
@@ -284,7 +298,7 @@ export function runTui(options: ChatOptions): Promise<void> {
       chalk.gray('  /help              show this help'),
       chalk.gray('  /models [query]    open the model picker (type to filter, arrows to move, Enter to switch, Esc to close)'),
       chalk.gray('  /provider [id]     list providers, or filter the picker to one provider'),
-      chalk.gray('  /model <id>        switch the active model'),
+      chalk.gray('  /model [id]        open the model picker (or switch straight to a known id)'),
       chalk.gray('  /thinking [level]  show or set reasoning level (off|minimal|low|medium|high|xhigh|max)'),
       chalk.gray('  /verify <level>    set the verification level (0-5)'),
       chalk.gray('  /verbose           toggle raw event/engine logging on or off'),
@@ -305,10 +319,8 @@ export function runTui(options: ChatOptions): Promise<void> {
       }
       const next = selectModel({ model: id, ...(activeProvider ? { provider: activeProvider } : {}) });
       if (!next) {
-        transcript.append(
-          chalk.yellow(`No model "${id}" found${activeProvider ? ` in provider ${activeProvider}` : ''}. Use /models to search.`),
-        );
-        tui.requestRender();
+        transcript.append(chalk.yellow(`No exact model "${id}" — opening the picker with close matches instead.`));
+        openModels(id);
         return;
       }
       busy = true;
@@ -519,8 +531,7 @@ export function runTui(options: ChatOptions): Promise<void> {
         return;
       }
       if (line === '/model') {
-        transcript.append(chalk.yellow('Usage: /model <model-id> — or /models to browse and pick.'));
-        tui.requestRender();
+        openModels();
         return;
       }
       if (line.startsWith('/model ')) {
