@@ -43,13 +43,4 @@ jobs:
         run: pnpm build
 
       - name: Test
-        shell: bash
-        run: |
-          pnpm test > /tmp/test.log 2>&1; exit_code=$?
-          if [ $exit_code -ne 0 ]; then
-            { grep -aE "ERR_PNPM|FAIL |AssertionError|✗|×|Error:" /tmp/test.log || tail -n 8 /tmp/test.log; } | head -n 8 | while IFS= read -r line; do
-              [ -z "$line" ] && continue
-              echo "::error file=docs/STATUS.md,line=1::${line}"
-            done
-          fi
-          exit $exit_code
+        run: pnpm test

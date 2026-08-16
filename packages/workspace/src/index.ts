@@ -767,20 +767,24 @@ export class WorkspaceManager {
     ];
     try {
       const result = await execa('rg', args, { cwd: worktree.path, reject: false, stdio: 'pipe' });
-      // A missing binary surfaces differently per platform: POSIX throws
-      // ENOENT (caught below), while Windows resolves exit 1 with a shell
-      // "not recognized" message. Distinguish that from a real no-match.
+      // A missing binary surfaces differently per platform. With execa v9 +
+      // reject:false, POSIX resolves a spawn failure as `failed: true` with
+      // no exit code (it does not throw ENOENT); Windows resolves exit 1 with
+      // a shell "not recognized" message. Either way, degrade to the
+      // substring scan rather than surfacing a confusing "rg failed" error.
       const missingBinary =
-        result.exitCode === 1 &&
-        result.stdout === '' &&
-        /not recognized|not found|no such file|command not found/i.test(result.stderr);
+        (result.failed && result.exitCode === undefined) ||
+        (result.exitCode === 1 &&
+          result.stdout === '' &&
+          /not recognized|not found|no such file|command not found/i.test(result.stderr));
       if (missingBinary) return this.fallbackSearch(worktree.path, basePath, query);
       if (result.exitCode === 0 || result.exitCode === 1) {
         return ok(result.stdout.trim() || '(no matches)');
       }
       return err(new Error(result.stderr.trim() || `rg failed (exit ${result.exitCode})`));
     } catch {
-      // rg not installed (POSIX spawn ENOENT) — degrade to a substring scan.
+      // rg not installed (older execa throws POSIX spawn ENOENT) — degrade to
+      // a substring scan.
       return this.fallbackSearch(worktree.path, basePath, query);
     }
   }
