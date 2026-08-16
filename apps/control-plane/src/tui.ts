@@ -78,8 +78,32 @@ export function runTui(options: ChatOptions): Promise<void> {
     };
     const editor = new Editor(tui, editorTheme);
 
+    // Without a chosen provider, the catalog's first entries are baseten /
+    // cerebras / cloudflare — not what a free-tier user wants. Lead with the
+    // providers the launch story targets (Groq / OpenRouter / Google / …).
+    const POPULAR_PROVIDERS = ['groq', 'openrouter', 'google', 'openai', 'ollama', 'nvidia'];
+    const listCuratedModels = (limit: number): ReturnType<typeof listModels> => {
+      const out: ReturnType<typeof listModels> = [];
+      for (const pid of POPULAR_PROVIDERS) {
+        for (const m of listModels({ provider: pid, coreCompatibleOnly: true })) {
+          out.push(m);
+          if (out.length >= limit) return out;
+        }
+      }
+      return out;
+    };
+
     const modelCompletions = (prefix: string) => {
-      const models = listModels({ query: prefix, coreCompatibleOnly: true, limit: 30 });
+      const models = prefix
+        ? listModels({
+            ...(activeProvider ? { provider: activeProvider } : {}),
+            query: prefix,
+            coreCompatibleOnly: true,
+            limit: 30,
+          })
+        : activeProvider
+          ? listModels({ provider: activeProvider, coreCompatibleOnly: true, limit: 30 })
+          : listCuratedModels(30);
       return models.map((m) => ({
         value: m.id,
         label: `${m.provider}/${m.id}`,
@@ -285,18 +309,27 @@ export function runTui(options: ChatOptions): Promise<void> {
     ];
 
     const listModelsToTranscript = (query?: string): void => {
-      const models = listModels({
-        ...(activeProvider ? { provider: activeProvider } : {}),
-        ...(query ? { query } : {}),
-        coreCompatibleOnly: true,
-        limit: 30,
-      });
+      const models = query
+        ? listModels({
+            ...(activeProvider ? { provider: activeProvider } : {}),
+            query,
+            coreCompatibleOnly: true,
+            limit: 20,
+          })
+        : activeProvider
+          ? listModels({ provider: activeProvider, coreCompatibleOnly: true, limit: 20 })
+          : listCuratedModels(20);
       if (models.length === 0) {
-        transcript.append(chalk.yellow('No core-compatible models match.'));
+        transcript.append(chalk.yellow('No core-compatible models match that query.'));
         tui.requestRender();
         return;
       }
-      transcript.append(chalk.gray(`${models.length} model(s):`));
+      if (!query && !activeProvider) {
+        transcript.append(chalk.gray('Popular free-tier models (Groq / OpenRouter / Google / OpenAI / Ollama / NVIDIA):'));
+        transcript.append(chalk.gray('  To see a specific provider, /provider <id> first, or /model <partial> for the dropdown.'));
+      } else {
+        transcript.append(chalk.gray(`${models.length} model(s):`));
+      }
       for (const m of models) {
         transcript.append(
           chalk.gray(
@@ -309,7 +342,7 @@ export function runTui(options: ChatOptions): Promise<void> {
 
     async function switchModel(id: string): Promise<void> {
       if (!id) {
-        transcript.append(chalk.yellow('Usage: /model <model-id> — or type /model <partial> to get a dropdown.'));
+        transcript.append(chalk.yellow('Type /model <partial> to browse (e.g. /model qwen), or /provider <id> to pick a provider first.'));
         tui.requestRender();
         return;
       }
@@ -529,7 +562,9 @@ export function runTui(options: ChatOptions): Promise<void> {
         return;
       }
       if (line === '/model') {
-        transcript.append(chalk.yellow('Usage: /model <model-id> — or type /model <partial> to get a dropdown.'));
+        transcript.append(
+          chalk.yellow('Type /model <partial> to browse (e.g. /model qwen), or /provider <id> to pick a provider first.'),
+        );
         tui.requestRender();
         return;
       }
