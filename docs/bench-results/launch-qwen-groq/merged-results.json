@@ -1,13 +1,13 @@
 {
-  "generatedAt": "2026-08-16T19:36:20.850Z",
+  "generatedAt": "2026-08-16T19:58:28.312Z",
   "model": "qwen/qwen3.6-27b",
-  "provider": "groq (free, 2 keys — merged)",
+  "provider": "groq (free, 3 keys — merged)",
   "configs": [
     "guppy-core"
   ],
   "maxAttempts": 3,
-  "note": "Merged from launch-qwen-groq (11/20, key 1) + launch-qwen-groq-2 (7/9, key 2). 200k tokens/day free cap per key.",
-  "passed": 18,
+  "note": "Merged from 3 Groq free keys (200k tokens/day each). Final: 20/20. Required a fixture fix — refactor-rename-groupby/pluck finalCheck matched the non-generic signature, but indexBy/pickField are generic (<T>).",
+  "passed": 20,
   "total": 20,
   "results": [
     {
@@ -586,47 +586,29 @@
       "config": "guppy-core",
       "taskId": "refactor-rename-groupby",
       "kind": "refactor",
-      "wallTimeMs": 327026,
-      "tokensTotal": 27342,
-      "toolCalls": 7,
-      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\.guppy\\bench\\launch-qwen-groq-2\\fixtures\\guppy-core\\refactor-rename-groupby",
-      "passed": false,
+      "wallTimeMs": 46832,
+      "tokensTotal": 9928,
+      "toolCalls": 3,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\.guppy\\bench\\launch-qwen-groq-3b\\fixtures\\guppy-core\\refactor-rename-groupby",
+      "passed": true,
       "attempts": [
         {
           "attempt": 1,
-          "wallTimeMs": 159202,
-          "tokens": 21085,
-          "toolCalls": 5,
-          "verified": false,
-          "errorSummary": "verification gate passed but the task acceptance check failed"
-        },
-        {
-          "attempt": 2,
-          "wallTimeMs": 107423,
-          "tokens": 6257,
-          "toolCalls": 2,
-          "verified": false,
-          "errorSummary": "verification gate passed but the task acceptance check failed"
-        },
-        {
-          "attempt": 3,
-          "wallTimeMs": 60304,
-          "tokens": 0,
-          "toolCalls": 0,
-          "verified": false,
-          "errorSummary": "Model returned HTTP 429 (https://api.groq.com/openai/v1/chat/completions): {\"error\":{\"message\":\"Rate limit reached for model `qwen/qwen3.6-27b` in organization `org_01m05zczbbesm8k17z03szvj1x` service tier `on_demand` on tokens per day (TPD): Limit 200000, Used 198269, Requested 2811. Please try aga"
+          "wallTimeMs": 46643,
+          "tokens": 9928,
+          "toolCalls": 3,
+          "verified": true
         }
       ],
-      "error": "Model returned HTTP 429 (https://api.groq.com/openai/v1/chat/completions): {\"error\":{\"message\":\"Rate limit reached for model `qwen/qwen3.6-27b` in organization `org_01m05zczbbesm8k17z03szvj1x` service tier `on_demand` on tokens per day (TPD): Limit 200000, Used 198269, Requested 2811. Please try again in 7m46.56s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n",
       "contextHealth": {
-        "files": 10,
-        "scoreMin": 69,
-        "scoreMax": 84,
-        "scoreAvg": 75.2,
+        "files": 4,
+        "scoreMin": 70,
+        "scoreMax": 82,
+        "scoreAvg": 76.3,
         "ciStatus": "WARN",
-        "totalTokens": 26043,
-        "wastedTokens": 70,
-        "tokensSaved": 70,
+        "totalTokens": 10639,
+        "wastedTokens": 28,
+        "tokensSaved": 26,
         "tool": "contextops@0.1.0"
       }
     },
@@ -634,31 +616,29 @@
       "config": "guppy-core",
       "taskId": "refactor-rename-pluck",
       "kind": "refactor",
-      "wallTimeMs": 60505,
-      "tokensTotal": 0,
-      "toolCalls": 0,
-      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\.guppy\\bench\\launch-qwen-groq-2\\fixtures\\guppy-core\\refactor-rename-pluck",
-      "passed": false,
+      "wallTimeMs": 74259,
+      "tokensTotal": 13490,
+      "toolCalls": 3,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\.guppy\\bench\\launch-qwen-groq-3b\\fixtures\\guppy-core\\refactor-rename-pluck",
+      "passed": true,
       "attempts": [
         {
           "attempt": 1,
-          "wallTimeMs": 60406,
-          "tokens": 0,
-          "toolCalls": 0,
-          "verified": false,
-          "errorSummary": "Model returned HTTP 429 (https://api.groq.com/openai/v1/chat/completions): {\"error\":{\"message\":\"Rate limit reached for model `qwen/qwen3.6-27b` in organization `org_01m05zczbbesm8k17z03szvj1x` service tier `on_demand` on tokens per day (TPD): Limit 200000, Used 198130, Requested 2759. Please try aga"
+          "wallTimeMs": 74139,
+          "tokens": 13490,
+          "toolCalls": 3,
+          "verified": true
         }
       ],
-      "error": "Model returned HTTP 429 (https://api.groq.com/openai/v1/chat/completions): {\"error\":{\"message\":\"Rate limit reached for model `qwen/qwen3.6-27b` in organization `org_01m05zczbbesm8k17z03szvj1x` service tier `on_demand` on tokens per day (TPD): Limit 200000, Used 198130, Requested 2759. Please try again in 6m24.048s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n",
       "contextHealth": {
-        "files": 1,
+        "files": 4,
         "scoreMin": 70,
-        "scoreMax": 70,
-        "scoreAvg": 70,
+        "scoreMax": 80,
+        "scoreAvg": 74.8,
         "ciStatus": "WARN",
-        "totalTokens": 2215,
-        "wastedTokens": 7,
-        "tokensSaved": 7,
+        "totalTokens": 10080,
+        "wastedTokens": 28,
+        "tokensSaved": 28,
         "tool": "contextops@0.1.0"
       }
     }
