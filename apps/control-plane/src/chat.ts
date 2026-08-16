@@ -30,6 +30,7 @@ import { createPiAdapter, createPrimeDaemonRuntime } from '@guppy/agent-runtime'
 import { createCoreRuntime } from '@guppy/core';
 import type { ModelConfig } from '@guppy/core';
 import {
+  THINKING_LEVELS,
   defaultConfigPath,
   describeModel,
   listModels,
@@ -39,6 +40,7 @@ import {
   saveUserConfig,
   selectModel,
 } from '@guppy/models';
+import type { ThinkingLevel } from '@guppy/models';
 import type { Model } from '@earendil-works/pi-ai';
 import { createSessionManager, type SessionManager } from './session-manager.js';
 import { attachLiveStream } from './live-stream.js';
@@ -66,6 +68,8 @@ export interface RuntimeOptions {
   timeoutMs?: number;
   /** Stream model output (defaults to on for the CLI; `--no-stream` disables). */
   stream?: boolean;
+  /** Reasoning level for catalog models with reasoning (applied via extraBody). */
+  thinkingLevel?: ThinkingLevel;
   /** Model↔tool turns within one attempt (pi adapter). */
   maxTurns: number;
 }
@@ -116,6 +120,16 @@ export function buildAgentRuntime(
     });
   }
   // Default: Guppy's own in-process agent core (no pi, no prime).
+  // A requested thinking level maps to the provider-specific reasoning fields
+  // via the catalog; unknown/non-reasoning models silently skip it.
+  const thinkingExtra =
+    options.thinkingLevel !== undefined
+      ? selectModel({
+          model: options.model,
+          ...(options.provider !== undefined ? { provider: options.provider } : {}),
+          thinkingLevel: options.thinkingLevel,
+        })?.extraBody
+      : undefined;
   return createCoreRuntime({
     eventStore,
     workspaceManager,
@@ -124,6 +138,7 @@ export function buildAgentRuntime(
       model: options.model,
       ...(options.baseUrl ? { baseUrl: options.baseUrl } : {}),
       ...(options.apiKey ? { apiKey: options.apiKey } : {}),
+      ...(thinkingExtra !== undefined ? { extraBody: thinkingExtra } : {}),
       ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
       ...(options.maxTokens !== undefined ? { maxTokens: options.maxTokens } : {}),
       ...(options.maxRetries !== undefined ? { maxRetries: options.maxRetries } : {}),
@@ -333,17 +348,24 @@ export async function runChat(options: ChatOptions): Promise<void> {
     }
   };
 
-  /** Swap the active model: rebuild runtime + session while keeping memory/events. */
-  async function rebuildRuntime(next: ModelConfig): Promise<void> {
+  /** Rebuild runtime + session after a mutation (keeps memory/events). */
+  async function swapRuntime(mutate: () => void): Promise<void> {
     await agentRuntime.shutdown();
-    options.model = next.model;
-    options.provider = next.provider;
-    if (next.baseUrl !== undefined) options.baseUrl = next.baseUrl;
-    else delete options.baseUrl;
-    if (next.apiKey !== undefined) options.apiKey = next.apiKey;
-    else delete options.apiKey;
+    mutate();
     agentRuntime = buildAgentRuntime(options, eventStore, workspaceManager);
     sessionManager = createSession();
+  }
+
+  /** Swap the active model: rebuild runtime + session while keeping memory/events. */
+  async function rebuildRuntime(next: ModelConfig): Promise<void> {
+    await swapRuntime(() => {
+      options.model = next.model;
+      options.provider = next.provider;
+      if (next.baseUrl !== undefined) options.baseUrl = next.baseUrl;
+      else delete options.baseUrl;
+      if (next.apiKey !== undefined) options.apiKey = next.apiKey;
+      else delete options.apiKey;
+    });
   }
 
   /** Prompt unless the REPL is already shutting down (rl.prompt() throws after close). */
@@ -375,6 +397,9 @@ export async function runChat(options: ChatOptions): Promise<void> {
     console.log(chalk.gray('  /provider [id]     list providers, or set the active provider'));
     console.log(chalk.gray('  /model <id>        switch the active model mid-session'));
     console.log(chalk.gray('  /setup [p] [key]   show config, or store a provider API key'));
+    console.log(
+      chalk.gray('  /thinking [level]  show or set reasoning level (off|minimal|low|medium|high|xhigh|max)'),
+    );
     console.log(chalk.gray('  /verify <level>    set the verification level (0-5; 6 formal = unsupported)'));
     console.log(chalk.gray('  /exit, /quit       leave the chat'));
     console.log(chalk.gray('  anything else      run it as a task through the gated agent loop'));
@@ -533,6 +558,45 @@ export async function runChat(options: ChatOptions): Promise<void> {
         console.log(chalk.green(`  Saved API key for ${provider} (${maskKey(apiKey)}).`));
       }
       prompt();
+      return;
+    }
+    if (userInput === '/thinking' || userInput.startsWith('/thinking ')) {
+      const arg = userInput.slice('/thinking '.length).trim();
+      if (arg === '') {
+        console.log(
+          chalk.gray(`  Thinking: ${options.thinkingLevel ?? 'off'} (levels: ${THINKING_LEVELS.join('|')})`),
+        );
+        prompt();
+        return;
+      }
+      if (!(THINKING_LEVELS as readonly string[]).includes(arg)) {
+        console.log(chalk.yellow(`  Invalid thinking level "${arg}" — use ${THINKING_LEVELS.join('|')}.`));
+        prompt();
+        return;
+      }
+      if (busy) {
+        console.log(chalk.yellow('  Still working — wait for the current turn to finish.'));
+        prompt();
+        return;
+      }
+      const level = arg as ThinkingLevel;
+      busy = true;
+      void (async () => {
+        try {
+          await swapRuntime(() => {
+            if (level === 'off') delete options.thinkingLevel;
+            else options.thinkingLevel = level;
+          });
+          console.log(chalk.green(`  Thinking set to ${level}.`));
+        } catch (e) {
+          console.error(
+            chalk.red(`  Could not set thinking: ${e instanceof Error ? e.message : String(e)}`),
+          );
+        } finally {
+          busy = false;
+          if (!shuttingDown) prompt();
+        }
+      })();
       return;
     }
     if (userInput.startsWith('/')) {

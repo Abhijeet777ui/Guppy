@@ -12,6 +12,10 @@
 import { clampThinkingLevel } from '@earendil-works/pi-ai';
 import type { Api, Model, ModelThinkingLevel } from '@earendil-works/pi-ai';
 
+/** Canonical reasoning levels (the same union pi-ai calls `ModelThinkingLevel`). */
+export const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
+
 export type ThinkingFormat =
   | 'openai'
   | 'openrouter'

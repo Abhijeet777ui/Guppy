@@ -18,8 +18,8 @@ export {
   findModel,
   describeModel,
 } from './catalog.js';
-export type { ThinkingFormat } from './thinking.js';
-export { detectThinkingFormat, buildThinkingBody } from './thinking.js';
+export type { ThinkingFormat, ThinkingLevel } from './thinking.js';
+export { detectThinkingFormat, buildThinkingBody, THINKING_LEVELS } from './thinking.js';
 export type { ModelSelection } from './config.js';
 export { toModelConfig, selectModel } from './config.js';
 export type {

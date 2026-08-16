@@ -41,10 +41,13 @@ export function toModelConfig(
   model: Model<Api>,
   selection: Omit<ModelSelection, 'model' | 'provider'> = {},
 ): ModelConfig {
-  const extraBody =
+  const body =
     selection.thinkingLevel !== undefined
       ? buildThinkingBody(model, selection.thinkingLevel)
       : undefined;
+  // `buildThinkingBody` returns `{}` when thinking can't apply (non-reasoning
+  // model or level 'off') — normalize that to no extraBody at all.
+  const extraBody = body !== undefined && Object.keys(body).length > 0 ? body : undefined;
   return {
     provider: model.provider,
     model: model.id,

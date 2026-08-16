@@ -54,4 +54,14 @@ describe('ModelConfig mapping', () => {
     const cfg = toModelConfig(model);
     expect(cfg.maxTokens).toBeUndefined();
   });
+
+  it('normalizes an unappliable thinking level to no extraBody', () => {
+    const reasoner = findModel('groq', 'qwen/qwen3.6-27b')!;
+    // 'off' produces an empty thinking body -> dropped entirely.
+    expect(toModelConfig(reasoner, { thinkingLevel: 'off' }).extraBody).toBeUndefined();
+
+    const nonReasoner = findModel('groq', 'llama-3.1-8b-instant')!;
+    // A non-reasoning model can't think -> dropped entirely.
+    expect(toModelConfig(nonReasoner, { thinkingLevel: 'high' }).extraBody).toBeUndefined();
+  });
 });

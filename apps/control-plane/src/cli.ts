@@ -12,6 +12,7 @@ import { createWorkspaceManager } from '@guppy/workspace';
 import { ContextEngine, loadSkills, saveSkill } from '@guppy/context-engine';
 import { createVerificationEngine } from '@guppy/verification-engine';
 import {
+  THINKING_LEVELS,
   defaultConfigPath,
   listModels,
   listProviders,
@@ -21,6 +22,7 @@ import {
   saveUserConfig,
   selectModel,
 } from '@guppy/models';
+import type { ThinkingLevel } from '@guppy/models';
 import {
   ALL_CONFIGS,
   attachContextHealth,
@@ -72,6 +74,16 @@ function parseVerificationLevel(value: string): VerificationLevel {
     process.exit(1);
   }
   return level as VerificationLevel;
+}
+
+/** Parse the --thinking flag, rejecting unknown levels loudly. */
+function parseThinkingLevel(value: string | undefined): ThinkingLevel | undefined {
+  if (value === undefined || value === '') return undefined;
+  if ((THINKING_LEVELS as readonly string[]).includes(value)) return value as ThinkingLevel;
+  console.error(
+    chalk.red(`[Guppy] Invalid thinking level "${value}": use ${THINKING_LEVELS.join('|')}.`),
+  );
+  process.exit(1);
 }
 
 /** Print the per-user provider config with keys masked. */
@@ -131,6 +143,7 @@ interface CommanderRuntimeOptions {
   provider?: string;
   baseUrl?: string;
   apiKey?: string;
+  thinking?: string;
   maxRetries?: string;
   retryBaseDelay?: string;
   retryMaxDelay?: string;
@@ -151,6 +164,7 @@ function toRuntimeOptions(options: CommanderRuntimeOptions): RuntimeOptions {
   const temperature = optNumber(options.temperature);
   const maxTokens = optNumber(options.maxTokens);
   const timeoutMs = optNumber(options.modelTimeoutMs);
+  const thinkingLevel = parseThinkingLevel(options.thinking);
   // Resolve provider/model/baseUrl/apiKey precedence: an explicit CLI flag
   // wins, then the per-user config preset (key/baseUrl + default model), then
   // the runtime's own env-var resolution.
@@ -169,6 +183,7 @@ function toRuntimeOptions(options: CommanderRuntimeOptions): RuntimeOptions {
     ...(resolved.provider !== undefined ? { provider: resolved.provider } : {}),
     ...(resolved.baseUrl !== undefined ? { baseUrl: resolved.baseUrl } : {}),
     ...(resolved.apiKey !== undefined ? { apiKey: resolved.apiKey } : {}),
+    ...(thinkingLevel !== undefined ? { thinkingLevel } : {}),
     ...(maxRetries !== undefined ? { maxRetries } : {}),
     ...(retryBaseDelayMs !== undefined ? { retryBaseDelayMs } : {}),
     ...(retryMaxDelayMs !== undefined ? { retryMaxDelayMs } : {}),
@@ -196,6 +211,7 @@ program
   .option('--temperature <number>', 'Sampling temperature for the core runtime')
   .option('--max-tokens <number>', 'Max completion tokens for the core runtime')
   .option('--model-timeout-ms <ms>', 'Per-request timeout in ms for the core runtime')
+  .option('--thinking <level>', `Reasoning level for catalog models with reasoning (${THINKING_LEVELS.join('|')})`)
   .option('--no-stream', 'Disable streaming model output (wait for the full response)')
   .option('-t, --max-turns <number>', 'Maximum turns', '20')
   .option('-v, --verification <level>', 'Verification level (0-5; 6 formal = unsupported)', '3')
@@ -341,6 +357,7 @@ program
   .option('--temperature <number>', 'Sampling temperature for the core runtime')
   .option('--max-tokens <number>', 'Max completion tokens for the core runtime')
   .option('--model-timeout-ms <ms>', 'Per-request timeout in ms for the core runtime')
+  .option('--thinking <level>', `Reasoning level for catalog models with reasoning (${THINKING_LEVELS.join('|')})`)
   .option('--no-stream', 'Disable streaming model output (wait for the full response)')
   .option('-t, --max-turns <number>', 'Maximum turns', '20')
   .option('-v, --verification <level>', 'Verification level (0-5; 6 formal = unsupported)', '3')

@@ -151,7 +151,7 @@ Merge to `main` only per slice, each with green tests + CI.
 - [ ] A real TUI: streaming chat pane, input with slash autocomplete, no flicker.
 - [x] `/models` — searchable catalog of models with cost/context/reasoning metadata; `/provider` presets (OpenRouter, Groq, Gemini, OpenAI, Ollama, …).
 - [x] Model selection persisted per user (`~/.guppy/config.json`); keys from env or wizard (`guppy setup` / `guppy config set`).
-- [~] Thinking/reasoning-level control for models that support it — implemented in `@guppy/models` (`selectModel` → `extraBody`); not yet exposed as a `--thinking` CLI flag.
+- [x] Thinking/reasoning-level control for models that support it — `--thinking <level>` on run/chat and `/thinking [level]` in chat, mapped via `selectModel` → `extraBody`.
 - [ ] MCP: `guppy mcp add <server>` → server tools available to the agent, sandbox-contained.
 - [ ] `/plan` and `/build` modes with a plan gate.
 - [ ] `guppy skill install <pkg>` → skill usable by the context engine.

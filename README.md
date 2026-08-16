@@ -18,7 +18,7 @@ Requirements: Node ≥ 20, pnpm 11, and Docker Desktop (for the sandbox default)
 ```bash
 pnpm install
 pnpm build
-pnpm test        # 172 tests across 11 suites
+pnpm test        # 173 tests across 11 suites
 
 # Store your provider key in ~/.guppy/config.json (interactive wizard),
 # or script it: `pnpm cli -- config set groq <key> --default-model qwen/qwen3.6-27b`
