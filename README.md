@@ -17,7 +17,7 @@ Requirements: Node ≥ 20, pnpm 11, and Docker Desktop (for the sandbox default)
 ```bash
 pnpm install
 pnpm build
-pnpm test        # 111 tests across 8 suites
+pnpm test        # 139 tests across 10 suites
 
 # Interactive chat (needs a model key in the environment)
 GUPPY_MODEL_PROVIDER=openrouter \
@@ -47,6 +47,6 @@ docs/       status, capabilities, launch checklist, audit insights, recorded ben
 
 ## Status
 
-The learn → act → verify → remember loop is **proven against real free-tier models** (nemotron-3-super-120b: 6/6 fixtures passing in one attempt each). The remaining launch gate is a clean full-suite free-tier run — see `docs/STATUS.md` §8.
+The learn → act → verify → remember loop is **proven on free tiers**: a clean full-suite run scored **20/20 fixtures passing** on `qwen/qwen3.6-27b` (Groq free — three keys, since each free key caps at 200k tokens/day). Merged evidence: [`docs/bench-results/launch-qwen-groq/merged-results.json`](docs/bench-results/launch-qwen-groq/merged-results.json). Earlier proof: nemotron-3-super-120b (OpenRouter free) 6/6 in one attempt each. See `docs/STATUS.md` for the full verified status and bug log.
 
 No license is attached yet.
