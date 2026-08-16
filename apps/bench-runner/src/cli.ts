@@ -98,6 +98,7 @@ program
   .option('--max-retries <n>', 'Max retries per model request for guppy-core (429/5xx/network)')
   .option('--retry-base-delay <ms>', 'Initial backoff delay in ms for guppy-core')
   .option('--retry-max-delay <ms>', 'Max single backoff delay in ms for guppy-core')
+  .option('--rpm <n>', 'Client-side rate limit (requests/minute) for guppy-core; 0 = off')
   .option('--dry-run', 'Materialize fixtures and gate them; never invoke an LLM', false)
   .option('--contextops-python <path>', 'Python interpreter for ContextOps context-health scoring', 'python')
   .action(async (options: Record<string, string | boolean>) => {
@@ -110,6 +111,7 @@ program
     const maxRetries = optNumber(options['maxRetries']);
     const retryBaseDelayMs = optNumber(options['retryBaseDelay']);
     const retryMaxDelayMs = optNumber(options['retryMaxDelay']);
+    const requestsPerMinute = optNumber(options['rpm']);
 
     const benchOptions: BenchOptions = {
       outDir,
@@ -130,6 +132,7 @@ program
       ...(maxRetries !== undefined ? { maxRetries } : {}),
       ...(retryBaseDelayMs !== undefined ? { retryBaseDelayMs } : {}),
       ...(retryMaxDelayMs !== undefined ? { retryMaxDelayMs } : {}),
+      ...(requestsPerMinute !== undefined ? { requestsPerMinute } : {}),
       ...(typeof options['wsl'] === 'string' && options['wsl'] !== ''
         ? { wslDistro: String(options['wsl']) }
         : {}),
@@ -158,6 +161,9 @@ program
         `  Retries (guppy-core): ${retry.maxRetries} (base ${retry.baseDelayMs}ms, max ${retry.maxDelayMs}ms)`,
       ),
     );
+    if (benchOptions.requestsPerMinute) {
+      console.log(chalk.gray(`  Rate limit (guppy-core): ${benchOptions.requestsPerMinute} req/min`));
+    }
     if (benchOptions.dryRun) {
       console.log(chalk.yellow('  Mode:     dry-run (no LLM calls)'));
     }

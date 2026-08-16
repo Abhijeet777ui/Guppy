@@ -1,7 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { OpenAIChatClient, type ChatMessage, type ToolDefinition } from '../src/index.js';
+import { OpenAIChatClient, RateLimiter, type ChatMessage, type ToolDefinition } from '../src/index.js';
 
 interface CapturedRequest {
   body: Record<string, unknown>;
@@ -599,5 +599,45 @@ describe('OpenAIChatClient', () => {
       server.closeAllConnections?.();
       await close(server);
     }
+  });
+});
+
+describe('RateLimiter', () => {
+  it('paces requests under the RPM cap within a 60s window', async () => {
+    vi.useFakeTimers();
+    try {
+      const limiter = new RateLimiter();
+      const key = 'fake|http://limit/v1';
+
+      const first = limiter.acquire(key, 2);
+      const second = limiter.acquire(key, 2);
+      const third = limiter.acquire(key, 2);
+
+      await first;
+      await second;
+
+      let thirdDone = false;
+      void third.then(() => {
+        thirdDone = true;
+      });
+
+      // The first two slots are consumed immediately; the third must wait for
+      // the window to slide before it can proceed.
+      await vi.advanceTimersByTimeAsync(59_000);
+      expect(thirdDone).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(1_100);
+      expect(thirdDone).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not throttle when rpm is unset or zero', async () => {
+    const limiter = new RateLimiter();
+    const startedAt = Date.now();
+    await limiter.acquire('fake|http://x/v1', undefined);
+    await limiter.acquire('fake|http://x/v1', 0);
+    expect(Date.now() - startedAt).toBeLessThan(100);
   });
 });
