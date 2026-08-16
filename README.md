@@ -18,12 +18,17 @@ Requirements: Node ≥ 20, pnpm 11, and Docker Desktop (for the sandbox default)
 ```bash
 pnpm install
 pnpm build
-pnpm test        # 163 tests across 11 suites
+pnpm test        # 172 tests across 11 suites
 
-# Interactive chat (needs a model key in the environment)
-GUPPY_MODEL_PROVIDER=openrouter \
-OPENROUTER_API_KEY=<your-key> \
+# Store your provider key in ~/.guppy/config.json (interactive wizard),
+# or script it: `pnpm cli -- config set groq <key> --default-model qwen/qwen3.6-27b`
+pnpm cli -- setup
+
+# Interactive chat (key comes from config, or OPENROUTER_API_KEY etc. in the env)
 pnpm cli -- chat
+
+# Browse the model catalog (no key needed)
+pnpm cli -- models --compatible --limit 20
 
 # One-shot gated task
 pnpm cli -- run "fix the failing test"

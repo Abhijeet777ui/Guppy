@@ -22,3 +22,17 @@ export type { ThinkingFormat } from './thinking.js';
 export { detectThinkingFormat, buildThinkingBody } from './thinking.js';
 export type { ModelSelection } from './config.js';
 export { toModelConfig, selectModel } from './config.js';
+export type {
+  ProviderPreset,
+  DefaultModel,
+  UserConfig,
+  RuntimeFlags,
+  ResolvedRuntime,
+} from './user-config.js';
+export {
+  defaultConfigPath,
+  loadUserConfig,
+  saveUserConfig,
+  maskKey,
+  resolveRuntimeOptions,
+} from './user-config.js';

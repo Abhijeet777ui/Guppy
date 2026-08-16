@@ -11,12 +11,12 @@
 Every claim below was checked against the current tree, not memory:
 
 - **Build:** `pnpm -r run build` — green across all 11 workspace projects.
-- **Tests:** `pnpm -r run test` (root `pnpm test`) — green end-to-end; 163 tests across 11 suites (only `contracts` passes via `--passWithNoTests`):
+- **Tests:** `pnpm -r run test` (root `pnpm test`) — green end-to-end; 172 tests across 11 suites (only `contracts` passes via `--passWithNoTests`):
 
   | Suite | Tests | Covers |
   |---|---|---|
   | `@guppy/core` | 29 | OpenAI client (request shape, auth, errors, fenced-JSON + `<function/name>` text-tool-call fallbacks, assistant `tool_calls.type` normalization, streaming SSE, backoff, per-request timeout, sliding-window rate limiter, `extraBody` passthrough), full core tool loop E2E, rich tools (search/apply_patch/git) |
-  | `@guppy/models` | 23 | pi-ai catalog facade (providers/models/search, core-compatible filter), catalog → `ModelConfig` mapping, thinking/reasoning passthrough (per-provider shapes) |
+  | `@guppy/models` | 32 | pi-ai catalog facade (providers/models/search, core-compatible filter), catalog → `ModelConfig` mapping, thinking/reasoning passthrough (per-provider shapes), per-user `~/.guppy/config.json` (load/save/mask/resolve + CLI-flag precedence) |
   | `@guppy/workspace` | 7 | unified-diff parser + fuzzy hunk applier, symlink path containment |
   | `@guppy/agent-runtime` | 3 | prime-agent spawn → JSONL framing → parse → events E2E; non-zero exit; missing binary |
   | `@guppy/verification-engine` | 9 | level commands, output parsers (incl. real-eslint stylish), escalation |
@@ -129,6 +129,9 @@ On success the agent's changes land in the source repo: git repos get a `commit 
 
 ### 3.14 Model catalog & selection (`@guppy/models`)
 A lazy facade over the pi-ai built-in registry (MIT, attributed in NOTICE): `listProviders()` / `listModels()` (search + core-compatibility filter) / `findModel()` / `describeModel()`, plus `selectModel()` / `toModelConfig()` which map a catalog entry into Guppy's own `ModelConfig` — including `buildThinkingBody()`, which emits the per-provider reasoning/thinking request fields pi-ai would send (OpenRouter `reasoning.effort`, DeepSeek `thinking`, OpenAI `reasoning_effort`, …) via `ModelConfig.extraBody`. pi-ai types are confined to this package. Exposed as `guppy models [query]` / `guppy providers` and the chat `/models` `/provider` `/model` commands. `core-compatible` = `openai-completions` API (what the core client can drive); native-only providers (Anthropic, Gemini, OpenAI-responses) are listed but flagged as needing an adapter.
+
+### 3.15 Provider config & setup wizard (`~/.guppy/config.json`)
+Per-user provider config at `~/.guppy/config.json` (override with `GUPPY_CONFIG`): provider API keys + base-URL presets and a `default` provider/model pair. `guppy setup` is an interactive wizard (pick provider → paste key → optional default model, keys masked on display); `guppy config` shows it, and `guppy config set/remove/path` script it for CI. Runtime precedence is CLI flag > config preset > env var, and the config `default` applies only when *neither* `--model` nor `--provider` is given (an explicit `--provider openrouter` never inherits a default model meant for Groq). Chat mirrors this with `/setup [provider] [key]`. Keys are stored in plaintext with 0600 permissions — the same trade-off as other coding agents.
 
 ---
 

@@ -4,13 +4,23 @@
 
 import { Command } from 'commander';
 import chalk from 'chalk';
+import { createInterface } from 'node:readline';
 import { ulid, now } from '@guppy/contracts';
 import type { Task, VerificationLevel } from '@guppy/contracts';
 import { createEventStore } from '@guppy/event-store';
 import { createWorkspaceManager } from '@guppy/workspace';
 import { ContextEngine, loadSkills, saveSkill } from '@guppy/context-engine';
 import { createVerificationEngine } from '@guppy/verification-engine';
-import { listModels, listProviders } from '@guppy/models';
+import {
+  defaultConfigPath,
+  listModels,
+  listProviders,
+  loadUserConfig,
+  maskKey,
+  resolveRuntimeOptions,
+  saveUserConfig,
+  selectModel,
+} from '@guppy/models';
 import {
   ALL_CONFIGS,
   attachContextHealth,
@@ -64,10 +74,60 @@ function parseVerificationLevel(value: string): VerificationLevel {
   return level as VerificationLevel;
 }
 
+/** Print the per-user provider config with keys masked. */
+function printUserConfig(): void {
+  const path = defaultConfigPath();
+  const config = loadUserConfig(path);
+  console.log(chalk.blue(`[Guppy] Config: ${path}`));
+  const entries = Object.entries(config.providers);
+  if (entries.length === 0) {
+    console.log(chalk.yellow('  No providers configured. Run `guppy setup` to add one.'));
+  } else {
+    for (const [id, preset] of entries) {
+      const parts: string[] = [];
+      if (preset.apiKey) parts.push(`key ${maskKey(preset.apiKey)}`);
+      if (preset.baseUrl) parts.push(`baseUrl ${preset.baseUrl}`);
+      console.log(chalk.gray(`  ${id.padEnd(20)} ${parts.join(' · ') || '(no key)'}`));
+    }
+  }
+  if (config.default) {
+    console.log(chalk.gray(`  default model: ${config.default.provider}/${config.default.model}`));
+  }
+}
+
+/**
+ * A prompt queue over one readline interface. The `line` listener is
+ * registered once, up front, so lines already buffered in a piped stdin are
+ * queued rather than lost between `await`ed prompts (rl.question() drops them).
+ */
+function createPrompter() {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const buffer: string[] = [];
+  const pending: Array<{ resolve: (line: string) => void }> = [];
+  rl.on('line', (line) => {
+    const waiter = pending.shift();
+    if (waiter) waiter.resolve(line);
+    else buffer.push(line);
+  });
+  rl.on('close', () => {
+    while (pending.length > 0) pending.shift()!.resolve('');
+  });
+  return {
+    ask(question: string): Promise<string> {
+      process.stdout.write(question);
+      if (buffer.length > 0) return Promise.resolve(buffer.shift()!);
+      return new Promise((resolve) => pending.push({ resolve }));
+    },
+    close(): void {
+      rl.close();
+    },
+  };
+}
+
 /** Commander option shape shared by `run` and `chat` (runtime-affecting flags). */
 interface CommanderRuntimeOptions {
   runtime: string;
-  model: string;
+  model?: string;
   provider?: string;
   baseUrl?: string;
   apiKey?: string;
@@ -91,12 +151,24 @@ function toRuntimeOptions(options: CommanderRuntimeOptions): RuntimeOptions {
   const temperature = optNumber(options.temperature);
   const maxTokens = optNumber(options.maxTokens);
   const timeoutMs = optNumber(options.modelTimeoutMs);
+  // Resolve provider/model/baseUrl/apiKey precedence: an explicit CLI flag
+  // wins, then the per-user config preset (key/baseUrl + default model), then
+  // the runtime's own env-var resolution.
+  const resolved = resolveRuntimeOptions(
+    {
+      ...(options.model !== undefined ? { model: options.model } : {}),
+      ...(options.provider !== undefined ? { provider: options.provider } : {}),
+      ...(options.baseUrl !== undefined ? { baseUrl: options.baseUrl } : {}),
+      ...(options.apiKey !== undefined ? { apiKey: options.apiKey } : {}),
+    },
+    loadUserConfig(),
+  );
   return {
     runtime: options.runtime,
-    model: options.model,
-    ...(options.provider ? { provider: options.provider } : {}),
-    ...(options.baseUrl ? { baseUrl: options.baseUrl } : {}),
-    ...(options.apiKey ? { apiKey: options.apiKey } : {}),
+    model: resolved.model,
+    ...(resolved.provider !== undefined ? { provider: resolved.provider } : {}),
+    ...(resolved.baseUrl !== undefined ? { baseUrl: resolved.baseUrl } : {}),
+    ...(resolved.apiKey !== undefined ? { apiKey: resolved.apiKey } : {}),
     ...(maxRetries !== undefined ? { maxRetries } : {}),
     ...(retryBaseDelayMs !== undefined ? { retryBaseDelayMs } : {}),
     ...(retryMaxDelayMs !== undefined ? { retryMaxDelayMs } : {}),
@@ -114,7 +186,7 @@ program
   .command('run [task]')
   .description('Run a coding task in a repository')
   .option('-r, --repo <path>', 'Repository path', process.cwd())
-  .option('-m, --model <model>', 'Default model', 'claude-3-5-sonnet')
+  .option('-m, --model <model>', 'Model id (default: ~/.guppy/config.json default, else claude-3-5-sonnet)')
   .option('--provider <name>', 'Model provider for the core runtime (openai, openrouter, nvidia, …)')
   .option('--base-url <url>', 'OpenAI-compatible API base URL for the core runtime')
   .option('--api-key <key>', 'API key for the core runtime (provider env var used when omitted)')
@@ -139,6 +211,7 @@ program
   .option('--resume', 'Resume the most recent interrupted run in this repo')
   .action(async (taskDescription, options) => {
     const repoPath = resolve(options.repo);
+    const runtimeOptions = toRuntimeOptions(options);
     const resumeCheckpoint = options.resume ? latestCheckpoint(repoPath) : null;
 
     if (options.resume && !resumeCheckpoint) {
@@ -166,7 +239,7 @@ program
     console.log(chalk.gray(`  Repo: ${repoPath}`));
     console.log(chalk.gray(`  Task: ${task.description}`));
     console.log(chalk.gray(`  Runtime: ${options.runtime}`));
-    console.log(chalk.gray(`  Model: ${options.model}`));
+    console.log(chalk.gray(`  Model: ${runtimeOptions.model}`));
     console.log(chalk.gray(`  Max turns: ${resumeCheckpoint?.maxTurns ?? options.maxTurns}`));
     console.log(chalk.gray(`  Verification: ${task.verificationLevel}`));
     if (resumeCheckpoint) {
@@ -208,7 +281,7 @@ program
       timeout: 300_000,
     });
 
-    const agentRuntime = buildAgentRuntime(toRuntimeOptions(options), eventStore, workspaceManager);
+    const agentRuntime = buildAgentRuntime(runtimeOptions, eventStore, workspaceManager);
 
     // Pass the same event store and workspace manager the runtime and
     // verification engine already use; otherwise the session manager silently
@@ -258,7 +331,7 @@ program
   .command('chat')
   .description('Interactive chat over the agent loop (each message is a gated task run)')
   .option('-r, --repo <path>', 'Repository path', process.cwd())
-  .option('-m, --model <model>', 'Default model', 'claude-3-5-sonnet')
+  .option('-m, --model <model>', 'Model id (default: ~/.guppy/config.json default, else claude-3-5-sonnet)')
   .option('--provider <name>', 'Model provider for the core runtime (openai, openrouter, nvidia, …)')
   .option('--base-url <url>', 'OpenAI-compatible API base URL for the core runtime')
   .option('--api-key <key>', 'API key for the core runtime (provider env var used when omitted)')
@@ -580,6 +653,114 @@ program
           `  ${m.provider.padEnd(12)} ${m.id}  ctx ${m.contextWindow}  max ${m.maxTokens}${m.reasoning ? '  reasoning' : ''}  [${tag}]`,
         ),
       );
+    }
+  });
+
+const configCmd = program
+  .command('config')
+  .description('Show or edit the per-user provider config (~/.guppy/config.json)');
+
+configCmd.action(printUserConfig);
+
+configCmd
+  .command('set <provider> <apiKey>')
+  .description('Store an API key for a provider')
+  .option('--base-url <url>', 'Override the provider base URL')
+  .option('--default-model <id>', 'Also set this provider/model as the default')
+  .action((provider: string, apiKey: string, options: { baseUrl?: string; defaultModel?: string }) => {
+    const path = defaultConfigPath();
+    const config = loadUserConfig(path);
+    const existing = config.providers[provider] ?? {};
+    config.providers[provider] = {
+      ...existing,
+      apiKey,
+      ...(options.baseUrl !== undefined ? { baseUrl: options.baseUrl } : {}),
+    };
+    if (options.defaultModel !== undefined) {
+      config.default = { provider, model: options.defaultModel };
+    }
+    saveUserConfig(config, path);
+    console.log(chalk.green(`[Guppy] Saved ${provider} → ${path}`));
+    if (config.default) {
+      console.log(chalk.gray(`  default model: ${config.default.provider}/${config.default.model}`));
+    }
+  });
+
+configCmd
+  .command('remove <provider>')
+  .description('Remove a provider from the config')
+  .action((provider: string) => {
+    const path = defaultConfigPath();
+    const config = loadUserConfig(path);
+    if (!(provider in config.providers)) {
+      console.log(chalk.yellow(`[Guppy] No config for "${provider}".`));
+      return;
+    }
+    delete config.providers[provider];
+    if (config.default?.provider === provider) {
+      delete config.default;
+    }
+    saveUserConfig(config, path);
+    console.log(chalk.green(`[Guppy] Removed ${provider}.`));
+  });
+
+configCmd
+  .command('path')
+  .description('Print the config file path')
+  .action(() => {
+    console.log(defaultConfigPath());
+  });
+
+program
+  .command('setup')
+  .description('Interactive provider setup: pick a provider, paste a key, save to ~/.guppy/config.json')
+  .action(async () => {
+    const providers = listProviders().filter((p) => p.coreCompatibleCount > 0);
+    console.log(chalk.blue('[Guppy] Provider setup'));
+    console.log(chalk.gray('  Core-compatible providers (usable by the core runtime):'));
+    for (const p of providers) {
+      console.log(chalk.gray(`    ${p.id.padEnd(24)} ${p.name} (${p.modelCount} models)`));
+    }
+    console.log(chalk.gray('  Prefer scripts/CI? Use: guppy config set <provider> <key>'));
+
+    const prompts = createPrompter();
+    try {
+      const provider = (await prompts.ask('\nProvider id: ')).trim();
+      if (!providers.some((p) => p.id === provider)) {
+        console.error(
+          chalk.red(`[Guppy] Unknown provider "${provider}". Run \`guppy providers\` to list them.`),
+        );
+        process.exit(1);
+      }
+      const apiKey = (await prompts.ask(`API key for ${provider}: `)).trim();
+      if (!apiKey) {
+        console.error(chalk.red('[Guppy] No API key entered — nothing saved.'));
+        process.exit(1);
+      }
+
+      const config = loadUserConfig();
+      config.providers[provider] = { ...(config.providers[provider] ?? {}), apiKey };
+
+      const modelChoice = (await prompts.ask('Default model (leave blank to skip): ')).trim();
+      if (modelChoice) {
+        if (!selectModel({ provider, model: modelChoice })) {
+          console.log(
+            chalk.yellow(`  Note: "${modelChoice}" not found in ${provider}'s catalog — saved anyway.`),
+          );
+        }
+        config.default = { provider, model: modelChoice };
+      }
+
+      const path = saveUserConfig(config);
+      console.log(chalk.green(`\n[Guppy] Saved ${provider} → ${path}`));
+      if (config.default) {
+        console.log(chalk.green(`  Default model: ${config.default.provider}/${config.default.model}`));
+      }
+      console.log(
+        chalk.gray('  Keys are stored in plaintext with 0600 permissions — rotate them if the file leaks.'),
+      );
+    } finally {
+      prompts.close();
     }
   });
 

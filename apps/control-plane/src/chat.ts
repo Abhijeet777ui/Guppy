@@ -29,7 +29,16 @@ import { createVerificationEngine } from '@guppy/verification-engine';
 import { createPiAdapter, createPrimeDaemonRuntime } from '@guppy/agent-runtime';
 import { createCoreRuntime } from '@guppy/core';
 import type { ModelConfig } from '@guppy/core';
-import { describeModel, listModels, listProviders, selectModel } from '@guppy/models';
+import {
+  defaultConfigPath,
+  describeModel,
+  listModels,
+  listProviders,
+  loadUserConfig,
+  maskKey,
+  saveUserConfig,
+  selectModel,
+} from '@guppy/models';
 import type { Model } from '@earendil-works/pi-ai';
 import { createSessionManager, type SessionManager } from './session-manager.js';
 import { attachLiveStream } from './live-stream.js';
@@ -304,6 +313,26 @@ export async function runChat(options: ChatOptions): Promise<void> {
     );
   };
 
+  const printConfig = (): void => {
+    const path = defaultConfigPath();
+    const config = loadUserConfig(path);
+    console.log(chalk.gray(`  Config: ${path}`));
+    const entries = Object.entries(config.providers);
+    if (entries.length === 0) {
+      console.log(chalk.yellow('  No providers configured. Run `guppy setup` or /setup <provider> <key>.'));
+    } else {
+      for (const [id, preset] of entries) {
+        const parts: string[] = [];
+        if (preset.apiKey) parts.push(`key ${maskKey(preset.apiKey)}`);
+        if (preset.baseUrl) parts.push(`baseUrl ${preset.baseUrl}`);
+        console.log(chalk.gray(`    ${id.padEnd(20)} ${parts.join(' · ') || '(no key)'}`));
+      }
+    }
+    if (config.default) {
+      console.log(chalk.gray(`    default model: ${config.default.provider}/${config.default.model}`));
+    }
+  };
+
   /** Swap the active model: rebuild runtime + session while keeping memory/events. */
   async function rebuildRuntime(next: ModelConfig): Promise<void> {
     await agentRuntime.shutdown();
@@ -345,6 +374,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
     console.log(chalk.gray('  /models [query]    list core-compatible models (search by id/name)'));
     console.log(chalk.gray('  /provider [id]     list providers, or set the active provider'));
     console.log(chalk.gray('  /model <id>        switch the active model mid-session'));
+    console.log(chalk.gray('  /setup [p] [key]   show config, or store a provider API key'));
     console.log(chalk.gray('  /verify <level>    set the verification level (0-5; 6 formal = unsupported)'));
     console.log(chalk.gray('  /exit, /quit       leave the chat'));
     console.log(chalk.gray('  anything else      run it as a task through the gated agent loop'));
@@ -482,6 +512,27 @@ export async function runChat(options: ChatOptions): Promise<void> {
           if (!shuttingDown) prompt();
         }
       })();
+      return;
+    }
+    if (userInput === '/setup' || userInput.startsWith('/setup ')) {
+      const args = userInput.slice('/setup '.length).trim();
+      if (args === '') {
+        printConfig();
+        prompt();
+        return;
+      }
+      const space = args.indexOf(' ');
+      const provider = space === -1 ? args : args.slice(0, space);
+      const apiKey = space === -1 ? '' : args.slice(space + 1).trim();
+      if (!apiKey) {
+        console.log(chalk.yellow('  Usage: /setup (show) or /setup <provider> <api-key>'));
+      } else {
+        const config = loadUserConfig();
+        config.providers[provider] = { ...(config.providers[provider] ?? {}), apiKey };
+        saveUserConfig(config);
+        console.log(chalk.green(`  Saved API key for ${provider} (${maskKey(apiKey)}).`));
+      }
+      prompt();
       return;
     }
     if (userInput.startsWith('/')) {
