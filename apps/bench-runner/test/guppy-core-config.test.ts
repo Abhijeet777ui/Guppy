@@ -71,6 +71,9 @@ describe('guppy-core-skill bench config', () => {
       maxAttempts: 3,
       attemptTimeoutMs: 10_000,
       dryRun: false,
+      // Compression knobs must thread through to the core runtime too.
+      maxHistoryTokens: 4_000,
+      historyKeepRecentTurns: 1,
     });
 
     expect(result.config).toBe('guppy-core-skill');

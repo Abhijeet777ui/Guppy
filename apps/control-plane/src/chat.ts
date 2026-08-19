@@ -176,6 +176,13 @@ export interface RuntimeOptions {
    * /model rebuild, so the same external tools survive runtime switches.
    */
   mcpBridge?: McpBridge | null;
+  /**
+   * Long-horizon guard: estimated history-token budget before the runtime
+   * compresses older turns into a recap (0 disables; default 60_000).
+   */
+  maxHistoryTokens?: number;
+  /** Enable the optional LLM summarizer over the deterministic recap. */
+  historySummary?: boolean;
 }
 
 function createDefaultModel(modelId: string): Model<any> {
@@ -236,6 +243,8 @@ export function buildAgentRuntime(
     stream: options.stream !== false,
     maxTurns: 30,
     ...(options.contextCaptureDir ? { contextCaptureDir: options.contextCaptureDir } : {}),
+    ...(options.maxHistoryTokens !== undefined ? { maxHistoryTokens: options.maxHistoryTokens } : {}),
+    ...(options.historySummary ? { historySummarizer: {} } : {}),
   });
 }
 

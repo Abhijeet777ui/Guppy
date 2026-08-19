@@ -101,6 +101,9 @@ program
   .option('--retry-base-delay <ms>', 'Initial backoff delay in ms for guppy-core')
   .option('--retry-max-delay <ms>', 'Max single backoff delay in ms for guppy-core')
   .option('--rpm <n>', 'Client-side rate limit (requests/minute) for guppy-core; 0 = off')
+  .option('--max-history-tokens <n>', 'History-token budget before older turns are compressed into a recap (0 = never compress)')
+  .option('--history-keep-recent-turns <n>', 'Model turns kept verbatim after a recap (core default: 2)')
+  .option('--history-summary <mode>', "Summarize the compressed history with an LLM ('llm') or keep the deterministic recap ('none')", 'none')
   .option('--skills <dir>', 'Skills dir injected into every task for the guppy-core-skill config (default: the installed per-user skills dir)')
   .option('--dry-run', 'Materialize fixtures and gate them; never invoke an LLM', false)
   .option('--contextops-python <path>', 'Python interpreter for ContextOps context-health scoring', 'python')
@@ -152,6 +155,13 @@ program
       ...(typeof options['skills'] === 'string' && options['skills'] !== ''
         ? { skillsDir: resolve(String(options['skills'])) }
         : {}),
+      ...(optNumber(options['maxHistoryTokens']) !== undefined
+        ? { maxHistoryTokens: optNumber(options['maxHistoryTokens'])! }
+        : {}),
+      ...(optNumber(options['historyKeepRecentTurns']) !== undefined
+        ? { historyKeepRecentTurns: optNumber(options['historyKeepRecentTurns'])! }
+        : {}),
+      ...(options['historySummary'] === 'llm' ? { historySummary: 'llm' as const } : {}),
     };
 
     const tasks = selectTasks(benchOptions.taskFilter);

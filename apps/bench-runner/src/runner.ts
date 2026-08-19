@@ -148,6 +148,15 @@ export interface BenchOptions {
    * `guppy-core` (no injected skills) vs `guppy-core-skill`.
    */
   skillsDir?: string;
+  /**
+   * History-token budget before the core runtime compresses older turns into
+   * a recap (0 = never compress). Unset = the core runtime's default.
+   */
+  maxHistoryTokens?: number;
+  /** How many of the most recent model turns stay verbatim after a recap. */
+  historyKeepRecentTurns?: number;
+  /** 'llm' enables the optional LLM summarizer over the deterministic recap. */
+  historySummary?: 'none' | 'llm';
   /** Explicit task list (dataset imports). Overrides taskFilter. */
   tasks?: BenchTaskSpec[];
   /** Python interpreter used to run ContextOps context-health scoring. */
@@ -509,6 +518,13 @@ async function runGuppyWrapped(
             model: coreModelConfig(options),
             maxTurns: 30,
             contextCaptureDir: join(options.outDir, 'context', config, spec.id),
+            ...(options.maxHistoryTokens !== undefined
+              ? { maxHistoryTokens: options.maxHistoryTokens }
+              : {}),
+            ...(options.historyKeepRecentTurns !== undefined
+              ? { historyKeepRecentTurns: options.historyKeepRecentTurns }
+              : {}),
+            ...(options.historySummary === 'llm' ? { historySummarizer: {} } : {}),
           })
         : createPrimeDaemonRuntime({
             eventStore,

@@ -203,6 +203,8 @@ interface CommanderRuntimeOptions {
   stream?: boolean;
   primeBinary?: string;
   wsl?: string;
+  maxHistoryTokens?: string;
+  historySummary?: string;
   maxTurns: string;
 }
 
@@ -243,6 +245,10 @@ function toRuntimeOptions(options: CommanderRuntimeOptions): RuntimeOptions {
     ...(options.stream === false ? { stream: false } : {}),
     ...(options.primeBinary ? { primeBinary: options.primeBinary } : {}),
     ...(options.wsl ? { wsl: options.wsl } : {}),
+    ...(options.maxHistoryTokens !== undefined
+      ? { maxHistoryTokens: optNumber(options.maxHistoryTokens) ?? 60_000 }
+      : {}),
+    ...(options.historySummary === 'llm' ? { historySummary: true } : {}),
     maxTurns: parseInt(options.maxTurns, 10),
   };
 }
@@ -301,6 +307,8 @@ program
   .option('--wsl <distro>', 'Run prime-agent inside this WSL2 distro (Windows hosts)')
   .option('--prime-binary <path>', 'prime-agent executable (defaults to `prime-agent` on PATH)')
   .option('--local', 'Run without Docker (host execution, plain worktrees)')
+  .option('--max-history-tokens <n>', 'History-token budget before older turns are compressed into a recap (0 = never compress)', '60000')
+  .option('--history-summary <mode>', "Summarize the compressed history with an LLM ('llm') or keep the deterministic recap ('none')", 'none')
   .option('--keep-worktree', 'Keep the worktree after the run instead of merging changes back')
   .option('--commit-message <template>', 'Commit-message template for merge-back ({task} placeholder)', 'guppy: apply agent changes')
   .option('--no-commit', 'Merge changes back without creating git commits (files overlaid onto the repo)')
@@ -461,6 +469,8 @@ program
   .option('--model-timeout-ms <ms>', 'Per-request timeout in ms for the core runtime')
   .option('--thinking <level>', `Reasoning level for catalog models with reasoning (${THINKING_LEVELS.join('|')})`)
   .option('--no-stream', 'Disable streaming model output (wait for the full response)')
+  .option('--max-history-tokens <n>', 'History-token budget before older turns are compressed into a recap (0 = never compress)', '60000')
+  .option('--history-summary <mode>', "Summarize the compressed history with an LLM ('llm') or keep the deterministic recap ('none')", 'none')
   .option('-t, --max-turns <number>', 'Maximum turns', '20')
   .option('-v, --verification <level>', 'Verification level (0-5; 6 formal = unsupported)', '3')
   .option('--runtime <kind>', 'Agent runtime: core | prime | pi', 'core')

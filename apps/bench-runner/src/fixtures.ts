@@ -39,6 +39,12 @@ export interface BenchTaskSpec {
   /** Prompt handed to the agent verbatim (raw config) or via context packing. */
   description: string;
   mutations: Mutation[];
+  /**
+   * Deterministically generated files written after the base files (they win
+   * on path collisions). Used for long-horizon tasks whose payloads must be
+   * large — e.g. a big ledger so every read_file result costs real tokens.
+   */
+  generatedFiles?: Record<string, () => string>;
   /** Optional acceptance check beyond "the suite passes". */
   finalCheck?: (read: (relPath: string) => string | null) => boolean;
   /**
@@ -288,6 +294,54 @@ const DO_NOT_TOUCH_TESTS =
 function countOccurrences(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1;
 }
+
+/**
+ * Deterministic 60k-char ledger for the long-horizon fixture: the type +
+ * `sumBalances` (with the correct accumulator start of 0) sit at the top, the
+ * bulk is a big data array. Seeded so materialization is reproducible.
+ */
+function generateLedgerFile(): string {
+  const header = `export interface LedgerEntry {
+  id: string;
+  amount: number;
+}
+
+export function sumBalances(entries: LedgerEntry[]): number {
+  return entries.reduce((acc, e) => acc + e.amount, 0);
+}
+
+export const LEDGER: LedgerEntry[] = [
+`;
+  const lines: string[] = [];
+  let seed = 0x2f6e2b1;
+  const rand = (): number => {
+    // 32-bit LCG, deterministic across platforms.
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed % 10_000;
+  };
+  for (let i = 1; i <= 1_200; i++) {
+    const id = `tx-${String(i).padStart(8, '0')}`;
+    lines.push(`  { id: '${id}', amount: ${rand()} },`);
+  }
+  const body = lines.join('\n');
+  return `${header}${body}
+];\n`;
+}
+
+const LEDGER_TEST = String.raw`import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { sumBalances, LEDGER } from '../src/ledger.ts';
+
+// The first three amounts are deterministic (see generateLedgerFile):
+// 3644, 8427, 8878 -> expected 20949.
+test('sumBalances totals the first three ledger entries', () => {
+  assert.equal(sumBalances(LEDGER.slice(0, 3)), 3644 + 8427 + 8878);
+});
+
+test('sumBalances handles a single entry', () => {
+  assert.equal(sumBalances(LEDGER.slice(0, 1)), 3644);
+});
+`;
 
 export const BENCH_TASKS: BenchTaskSpec[] = [
   // --- bugfix (seeded defects) ---------------------------------------------
@@ -615,6 +669,25 @@ export const BENCH_TASKS: BenchTaskSpec[] = [
       );
     },
   },
+  // --- long horizon (large payloads; context compression A/Bs) ------------
+  {
+    id: 'longhorizon-ledger',
+    kind: 'bugfix',
+    description:
+      'The test suite fails: `sumBalances` returns totals that are off by one. The ledger in src/ledger.ts is large, but `sumBalances` is defined near the top of the file. Run `npm test` to reproduce, then fix src/ledger.ts so the whole suite passes.' +
+      DO_NOT_TOUCH_TESTS,
+    generatedFiles: {
+      'src/ledger.ts': generateLedgerFile,
+      'test/ledger.test.ts': () => LEDGER_TEST,
+    },
+    mutations: [
+      {
+        file: 'src/ledger.ts',
+        find: 'acc + e.amount, 0);',
+        replace: 'acc + e.amount, 1);',
+      },
+    ],
+  },
 ];
 
 export function getTask(id: string): BenchTaskSpec | undefined {
@@ -665,6 +738,13 @@ export function materializeFixture(spec: BenchTaskSpec, destDir: string): string
   rmSync(destDir, { recursive: true, force: true });
   mkdirSync(destDir, { recursive: true });
   writeBaseFiles(destDir);
+  if (spec.generatedFiles) {
+    for (const [relPath, generate] of Object.entries(spec.generatedFiles)) {
+      const abs = join(destDir, relPath);
+      mkdirSync(dirname(abs), { recursive: true });
+      writeFileSync(abs, generate(), 'utf8');
+    }
+  }
   applyMutations(destDir, spec);
   return destDir;
 }
