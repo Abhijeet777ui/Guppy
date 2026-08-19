@@ -51,6 +51,18 @@ interface OpenAIToolCallResponse {
 const RATE_LIMIT_WINDOW_MS = 60_000;
 
 /**
+ * Thrown when the caller's AbortSignal fires mid-request (user pressed Ctrl+C
+ * in chat). Distinct from a timeout or a network failure: the runtime maps it
+ * to outcome 'cancelled' instead of 'failure', and it is never retried.
+ */
+export class CancelledError extends Error {
+  constructor() {
+    super('Model request cancelled');
+    this.name = 'CancelledError';
+  }
+}
+
+/**
  * Sliding-window rate limiter, shared across every client instance in the
  * process. The bench constructs a fresh `OpenAIChatClient` per task, so a
  * per-instance limiter would reset its state on every task and never throttle;
@@ -102,7 +114,11 @@ export class OpenAIChatClient {
    * One non-streaming completion. Returns the assistant message's text and/or
    * tool calls plus token usage.
    */
-  async complete(messages: ChatMessage[], tools?: ToolDefinition[]): Promise<CompletionResult> {
+  async complete(
+    messages: ChatMessage[],
+    tools?: ToolDefinition[],
+    signal?: AbortSignal,
+  ): Promise<CompletionResult> {
     const url = `${resolveBaseUrl(this.config)}/chat/completions`;
     const apiKey = resolveApiKey(this.config);
 
@@ -124,9 +140,9 @@ export class OpenAIChatClient {
     if (this.config.maxTokens !== undefined) body['max_tokens'] = this.config.maxTokens;
     if (this.config.temperature !== undefined) body['temperature'] = this.config.temperature;
 
-    const response = await this.requestWithRetry(url, headers, body);
+    const response = await this.requestWithRetry(url, headers, body, signal);
 
-    const json = (await response.json()) as {
+    const json = (await withIdleTimeout(response.json(), this.config.streamIdleTimeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS, signal)) as {
       model?: string;
       choices?: Array<{
         message?: {
@@ -181,6 +197,7 @@ export class OpenAIChatClient {
     messages: ChatMessage[],
     tools?: ToolDefinition[],
     onDelta?: (accumulatedText: string) => void,
+    signal?: AbortSignal,
   ): Promise<CompletionResult> {
     const url = `${resolveBaseUrl(this.config)}/chat/completions`;
     const apiKey = resolveApiKey(this.config);
@@ -206,7 +223,7 @@ export class OpenAIChatClient {
     if (this.config.maxTokens !== undefined) body['max_tokens'] = this.config.maxTokens;
     if (this.config.temperature !== undefined) body['temperature'] = this.config.temperature;
 
-    const response = await this.requestWithRetry(url, headers, body);
+    const response = await this.requestWithRetry(url, headers, body, signal);
     if (!response.body) {
       throw new Error('Model returned an empty stream body');
     }
@@ -219,10 +236,14 @@ export class OpenAIChatClient {
     let model = this.config.model;
     let usage = { inputTokens: 0, outputTokens: 0 };
     const toolCallsByIndex = new Map<number, { id: string; name: string; args: string }>();
+    const idleMs = this.config.streamIdleTimeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS;
 
     try {
       for (;;) {
-        const { done, value } = await reader.read();
+        // A caller abort (Ctrl+C) mid-stream must stop the loop, not just the
+        // next fetch: the reader may otherwise idle waiting for deltas.
+        if (signal?.aborted) throw new CancelledError();
+        const { done, value } = await readWithIdleTimeout(reader, idleMs, signal);
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
@@ -304,6 +325,7 @@ export class OpenAIChatClient {
     url: string,
     headers: Record<string, string>,
     body: Record<string, unknown>,
+    signal?: AbortSignal,
   ): Promise<Response> {
     const maxRetries = this.config.maxRetries ?? DEFAULT_MAX_RETRIES;
     const baseDelayMs = this.config.retryBaseDelayMs ?? DEFAULT_RETRY_BASE_DELAY_MS;
@@ -312,6 +334,9 @@ export class OpenAIChatClient {
     const rateLimitKey = `${this.config.provider}|${resolveBaseUrl(this.config)}`;
 
     for (let attempt = 0; ; attempt++) {
+      // A caller abort (Ctrl+C) is final: stop pacing/retrying and surface it.
+      if (signal?.aborted) throw new CancelledError();
+
       // Every HTTP request — including retries — counts against the provider's
       // rate limit, so pace before each fetch rather than once per call.
       await sharedRateLimiter.acquire(rateLimitKey, this.config.requestsPerMinute);
@@ -319,8 +344,12 @@ export class OpenAIChatClient {
       let response: Response;
       // Bound every attempt so a hung endpoint (accepts the connection but
       // never sends headers) can't stall an unattended run forever. A timeout
-      // is a transient failure and retries like a network error.
+      // is a transient failure and retries like a network error. An external
+      // abort is forwarded into the same controller so the in-flight fetch
+      // tears down immediately.
       const controller = new AbortController();
+      const onAbort = (): void => controller.abort();
+      signal?.addEventListener('abort', onAbort, { once: true });
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
         response = await fetch(url, {
@@ -330,6 +359,7 @@ export class OpenAIChatClient {
           signal: controller.signal,
         });
       } catch (e) {
+        if (signal?.aborted) throw new CancelledError();
         const timedOut =
           typeof e === 'object' && e !== null && (e as { name?: string }).name === 'AbortError';
         const message = timedOut
@@ -342,6 +372,7 @@ export class OpenAIChatClient {
         throw new Error(message);
       } finally {
         clearTimeout(timer);
+        signal?.removeEventListener('abort', onAbort);
       }
 
       if (response.ok) return response;
@@ -370,6 +401,77 @@ export const DEFAULT_MAX_RETRIES = 2;
 export const DEFAULT_RETRY_BASE_DELAY_MS = 500;
 export const DEFAULT_RETRY_MAX_DELAY_MS = 30_000;
 export const DEFAULT_TIMEOUT_MS = 120_000;
+export const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 60_000;
+
+/**
+ * Race a promise against an idle deadline (used for the non-streaming body
+ * read). A caller abort wins immediately as CancelledError; the deadline wins
+ * as a stall error so a silent endpoint can't hang the turn.
+ */
+async function withIdleTimeout<T>(
+  promise: Promise<T>,
+  idleMs: number,
+  signal: AbortSignal | undefined,
+): Promise<T> {
+  if (signal?.aborted) throw new CancelledError();
+  let timer: NodeJS.Timeout | undefined;
+  const onAbort = (): void => {
+    void promise.catch(() => {}); // The read can't be cancelled; swallow its late rejection.
+  };
+  signal?.addEventListener('abort', onAbort, { once: true });
+  try {
+    return await new Promise<T>((resolve, reject) => {
+      const fail = (e: unknown): void => reject(e instanceof Error ? e : new Error(String(e)));
+      timer = setTimeout(
+        () => reject(new Error(`Model response stalled — no data for ${Math.round(idleMs / 1000)}s`)),
+        idleMs,
+      );
+      signal?.addEventListener('abort', () => reject(new CancelledError()), { once: true });
+      promise.then(resolve, fail);
+    });
+  } finally {
+    if (timer) clearTimeout(timer);
+    signal?.removeEventListener('abort', onAbort);
+  }
+}
+
+/**
+ * Read one stream chunk, giving up after `idleMs` of silence. The request
+ * timeout only covers time-to-first-byte (it is cleared once headers arrive),
+ * so without this a server that accepts the connection and then stalls can
+ * hang the turn forever. A caller abort cancels the stuck read.
+ */
+async function readWithIdleTimeout(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  idleMs: number,
+  signal: AbortSignal | undefined,
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  if (signal?.aborted) throw new CancelledError();
+  let cancelled = false;
+  let timer: NodeJS.Timeout | undefined;
+  const onAbort = (): void => {
+    cancelled = true;
+    // Cancelling the reader rejects the pending read below.
+    void reader.cancel().catch(() => {});
+  };
+  signal?.addEventListener('abort', onAbort, { once: true });
+  try {
+    return await new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
+      timer = setTimeout(() => {
+        cancelled = true;
+        void reader.cancel().catch(() => {});
+        reject(new Error(`Model stream stalled — no data for ${Math.round(idleMs / 1000)}s`));
+      }, idleMs);
+      reader.read().then(
+        (r) => resolve(r),
+        (e) => reject(cancelled ? new CancelledError() : e),
+      );
+    });
+  } finally {
+    if (timer) clearTimeout(timer);
+    signal?.removeEventListener('abort', onAbort);
+  }
+}
 
 /** Exponential backoff with full jitter: a random delay in [0, min(cap, base * 2^attempt)]. */
 function backoffDelayMs(attempt: number, base: number, cap: number): number {

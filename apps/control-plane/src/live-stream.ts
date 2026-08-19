@@ -59,6 +59,10 @@ export function renderLiveEvent(event: Event): string | null {
       const p = event.payload as { text?: string };
       return chalk.blue(`[model] ${truncate(p.text ?? '', 140)}`);
     }
+    case 'FinalAnswer': {
+      const p = event.payload as { text?: string };
+      return chalk.cyan(`[answer] ${truncate(p.text ?? '', 140)}`);
+    }
     case 'ToolCalled': {
       const p = event.payload as { tool?: string; args?: unknown };
       const args = argsPreview(p.args);

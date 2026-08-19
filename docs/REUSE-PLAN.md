@@ -1,6 +1,6 @@
 # Prime / Pi Reuse Plan — completing Guppy's interface
 
-**Status:** Slices 0–3 done (model catalog + `/models` + thinking + config wizard + TUI) · next: MCP (Slice 2) · **Branch:** `feature/nexus` · **Date:** 2026-08-16
+**Status:** Slices 0–3 done (model catalog + `/models` + thinking + config wizard + TUI) · MCP (Slice 2) done 2026-08-18 via the official `@modelcontextprotocol/sdk` (pi-ai 0.84.2 ships no `mcp/` module — the original reuse assumption didn't survive the version) · **Branch:** `feature/nexus`
 
 Guppy's core (loop, verification ladder, memory, sandbox, model client) is
 launched and verified (20/20 free-tier bench, 182 tests, CI green). This plan
@@ -46,7 +46,7 @@ Reach feature parity with opencode / Claude Code / prime-agent for the
 |---|---|---|---|---|
 | 4.1 | Model catalog + `/models` picker | `pi-ai` `models.ts` + `models.generated.ts` (cost/context/reasoning/cache/vision, 8+ providers) | npm dep | New `@guppy/models` package → feed `guppy chat` `/models` and config |
 | 4.2 | Reasoning / thinking levels | `pi-ai` providers (`AnthropicThinkingDisplay`, `GoogleThinkingLevel`, `reasoning_effort`) | npm dep | Map to `ModelConfig` extras → pass through `OpenAIChatClient` (backward-compatible body fields) |
-| 4.3 | MCP (external tools) | `pi-ai` `mcp/` (catalog, OAuth, `mcp:<server>` providers) | npm dep | New `@guppy/mcp` package: MCP server tools → `GuppyTool[]` bridge into the tool loop |
+| 4.3 | MCP (external tools) | ~~`pi-ai` `mcp/`~~ → **official `@modelcontextprotocol/sdk`** (client + stdio transport; pi-ai 0.84.2 has no mcp module) | npm dep | ✅ `@guppy/mcp` package: MCP server tools → `GuppyTool[]` bridge into the tool loop + `guppy mcp add/list/remove` |
 | 4.4 | TUI interface | `pi-tui` framework | npm dep | New `apps/guppy-tui` (or control-plane mode) wrapping SessionManager + `EventStore.subscribe` streaming |
 | 4.5 | Provider presets + auth config | `pi-ai` `env-api-keys.ts`, `oauth.ts`, `api-registry.ts` | npm dep / adapt | `@guppy/models` config file (per-user `~/.guppy/config.json`) |
 | 4.6 | Distributed skills | `pi-coding-agent` skills dir + config | vendor (MIT headers) | Extend context-engine `loadSkills` + `guppy skill` CLI (install/update/list) |
@@ -60,7 +60,7 @@ apps/guppy-tui          pi-tui UI: chat panes, /models picker, settings, plan/bu
         │ uses
 @guppy/models           pi-ai catalog + provider presets + ModelConfig building
         │ uses
-@guppy/mcp              pi-ai mcp client → GuppyTool[] bridge
+@guppy/mcp              official @modelcontextprotocol/sdk → GuppyTool[] bridge
         │
 @guppy/core  ──(unchanged primary runtime)──  OpenAIChatClient + tools + loop
 ```

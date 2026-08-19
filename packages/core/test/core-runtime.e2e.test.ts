@@ -9,7 +9,7 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { now, ulid, type Context, type Task } from '@guppy/contracts';
@@ -143,6 +143,20 @@ function listen(server: Server): Promise<string> {
   });
 }
 
+/**
+ * A mock that accepts the request but never answers (a hung endpoint). Used
+ * to prove Ctrl+C aborts an in-flight model call instead of waiting forever.
+ */
+function startHangingMock(): { server: Server; url: string } {
+  const server = createServer((_req, res) => {
+    // Intentionally send nothing at all: the connection stays open with no
+    // headers, so the client's fetch remains pending until the runtime's
+    // AbortController tears it down.
+    void res;
+  });
+  return { server, url: '' };
+}
+
 function close(server: Server): Promise<void> {
   return new Promise((resolve) => server.close(() => resolve()));
 }
@@ -230,6 +244,10 @@ describe('CoreAgentRuntime (hermetic)', () => {
       expect(types).toEqual(
         expect.arrayContaining(['TaskStarted', 'TrajectoryCompleted']),
       );
+      // The final no-tool-call completion is surfaced as both an event and
+      // the trajectory's `finalAnswer` (the assistant reply for chat).
+      expect(types.filter((t) => t === 'FinalAnswer')).toHaveLength(1);
+      expect(traj.finalAnswer).toBe('The task is complete.');
 
       const fileChanged = traj.events.find((e) => e.type === 'FileChanged')!;
       expect(fileChanged.payload.path).toBe('src/hello.ts');
@@ -320,6 +338,128 @@ describe('CoreAgentRuntime (hermetic)', () => {
         'export const answer = 42;\n',
       );
       expect(traj.events.filter((e) => e.type === 'ModelCalled')).toHaveLength(2);
+      // Streaming path surfaces the final text answer too.
+      expect(traj.finalAnswer).toBe('The task is complete.');
+      expect(traj.events.filter((e) => e.type === 'FinalAnswer')).toHaveLength(1);
+
+      await eventStore.close();
+      await wm.destroyWorkspace(workspace.id);
+    } finally {
+      await close(mock.server);
+    }
+  });
+
+  it('readOnly mode exposes only non-mutating tools and refuses edits', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'guppy-core-readonly-'));
+    tmpDirs.push(dir);
+
+    // Script: read an existing file (allowed), then try to write (must be
+    // refused because the tool is not exposed), then answer.
+    const responses = [
+      toolChoice('call-1', 'read_file', { path: 'existing.txt' }, { input: 10, output: 5 }),
+      toolChoice('call-2', 'write_file', { path: 'nope.ts', content: 'export const nope = 1;\n' }, { input: 20, output: 5 }),
+      {
+        model: 'fake/nemotron',
+        choices: [{ message: { role: 'assistant', content: 'Plan complete.' }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 30, completion_tokens: 8 },
+      },
+    ];
+    const mock = startMock(responses);
+    const url = await listen(mock.server);
+
+    try {
+      const eventStore = createEventStore({ rootDir: join(dir, 'events') });
+      const fixtureDir = join(dir, 'fixture');
+      mkdirSync(fixtureDir);
+      writeFileSync(join(fixtureDir, 'existing.txt'), 'hello', 'utf8');
+      const wm = createWorkspaceManager({ useContainers: false, worktreeBase: join(dir, 'worktrees') });
+      const workspace = (await wm.createWorkspace(fixtureDir)).value;
+
+      const runtime = createCoreRuntime({
+        eventStore,
+        workspaceManager: wm,
+        model: { provider: 'fake', model: 'fake/nemotron', baseUrl: url },
+        maxTurns: 10,
+        readOnly: true,
+        contextCaptureDir: join(dir, 'capture'),
+      });
+      await runtime.initialize(workspace);
+
+      const task = makeTask();
+      const result = await runtime.run(task, makeContext(task.id));
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      const traj = result.value;
+      // The write tool was never exposed, so the call resolved to "unknown tool".
+      const writeReturned = traj.events.find(
+        (e) => e.type === 'ToolReturned' && e.payload.tool === 'write_file',
+      );
+      expect(writeReturned).toBeTruthy();
+      expect(writeReturned!.payload.error).toContain('unknown tool');
+      // No file materialized, and no FileChanged event was emitted.
+      expect(existsSync(join(workspace.worktreePath!, 'nope.ts'))).toBe(false);
+      expect(traj.events.some((e) => e.type === 'FileChanged')).toBe(false);
+
+      // The read-only capture dumps exactly the non-mutating tool set.
+      const captures = readdirSync(join(dir, 'capture')).filter((f) => f.endsWith('.json')).sort();
+      const firstCapture = JSON.parse(readFileSync(join(dir, 'capture', captures[0]!), 'utf8'));
+      expect(
+        firstCapture.tools.map((t: { function: { name: string } }) => t.function.name).sort(),
+      ).toEqual(['git_diff', 'git_status', 'list_files', 'read_file', 'search']);
+
+      await eventStore.close();
+      await wm.destroyWorkspace(workspace.id);
+    } finally {
+      await close(mock.server);
+    }
+  });
+
+  it('aborts an in-flight model call and lands outcome cancelled (Ctrl+C)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'guppy-core-abort-'));
+    tmpDirs.push(dir);
+
+    const mock = startHangingMock();
+    const url = await listen(mock.server);
+
+    try {
+      const eventStore = createEventStore({ rootDir: join(dir, 'events') });
+      const fixtureDir = join(dir, 'fixture');
+      mkdirSync(fixtureDir);
+      const wm = createWorkspaceManager({ useContainers: false, worktreeBase: join(dir, 'worktrees') });
+      const workspace = (await wm.createWorkspace(fixtureDir)).value;
+
+      const runtime = createCoreRuntime({
+        eventStore,
+        workspaceManager: wm,
+        model: { provider: 'fake', model: 'fake/nemotron', baseUrl: url },
+        maxTurns: 10,
+        // A tight timeout keeps the test fast if the abort path ever breaks;
+        // the signal should win well before it fires.
+        modelTimeoutMs: 5_000,
+      });
+      await runtime.initialize(workspace);
+
+      const task = makeTask();
+      const controller = new AbortController();
+      const runPromise = runtime.run(task, makeContext(task.id), controller.signal);
+
+      // Give the request a beat to go in-flight, then Ctrl+C.
+      await new Promise((r) => setTimeout(r, 150));
+      controller.abort();
+
+      const result = await runPromise;
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      const traj = result.value;
+      expect(traj.outcome).toBe('cancelled');
+      expect(traj.error).toBeUndefined();
+
+      const completed = traj.events.find((e) => e.type === 'TrajectoryCompleted')!;
+      expect(completed.payload.outcome).toBe('cancelled');
+      expect(completed.payload.lastGatePassed).toBe(false);
 
       await eventStore.close();
       await wm.destroyWorkspace(workspace.id);

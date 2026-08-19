@@ -22,6 +22,8 @@ import { createEventStore } from '@guppy/event-store';
 import type { WorkspaceManager } from '@guppy/workspace';
 import { createWorkspaceManager } from '@guppy/workspace';
 import { loadSkills, type ContextEngine } from '@guppy/context-engine';
+import { defaultSkillsDir } from '@guppy/skills';
+import { defaultMemoryDir } from '@guppy/memory';
 import type { VerificationEngine } from '@guppy/verification-engine';
 import type { MemoryStore } from '@guppy/memory';
 import { createMemoryStore } from '@guppy/memory';
@@ -38,6 +40,13 @@ export interface SessionManagerConfig {
   repoPath: string;
   maxTurns: number;
   verificationBudget: number;
+  /**
+   * Read-only runtime used by `plan()` (Slice 4). When absent, `plan()` falls
+   * back to `agentRuntime` — but only the core runtime guarantees read-only
+   * tools, so callers that want a no-edits plan pass a dedicated read-only
+   * runtime here.
+   */
+  planRuntime?: AgentRuntime;
   /** Keep the worktree after the run instead of merging/destroying it. */
   keepWorktree: boolean;
   /** Commit-message template for merge-back; `{task}` is replaced with the task description. */
@@ -48,6 +57,10 @@ export interface SessionManagerConfig {
   force?: boolean;
   /** Directory holding `<name>.md` skill files; defaults to `<repoPath>/.guppy/skills`. */
   skillsDir?: string;
+  /** Per-user skills dir (installed skills follow the user across repos); defaults to `~/.guppy/skills`. */
+  userSkillsDir?: string;
+  /** Per-user global memory dir (fixes distilled here follow the user across repos); defaults to `~/.guppy/memory`. */
+  userMemoryDir?: string;
 }
 
 export interface SessionState {
@@ -56,21 +69,29 @@ export interface SessionState {
   context: Context;
   trajectory: Trajectory | null;
   turn: number;
-  status: 'initializing' | 'running' | 'paused' | 'completed' | 'failed';
+  status: 'initializing' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled';
 }
 
 export class SessionManager {
   private config: SessionManagerConfig;
   private state: SessionState | null = null;
-  /** Skills loaded from `<repoPath>/.guppy/skills` (empty when none exist). */
+  /**
+   * Skills for this run: the per-user installed skills (`~/.guppy/skills`,
+   * which follow the user across repos) merged with repo skills. Repo skills
+   * win name collisions — repo-specific teaching beats generic installs.
+   */
   private skills: Skill[];
 
   constructor(config: SessionManagerConfig) {
     this.config = config;
-    this.skills = loadSkills(config.skillsDir ?? join(config.repoPath, '.guppy', 'skills'));
+    const repoSkills = loadSkills(config.skillsDir ?? join(config.repoPath, '.guppy', 'skills'));
+    const userSkills = loadSkills(config.userSkillsDir ?? defaultSkillsDir());
+    const byName = new Map<string, Skill>();
+    for (const s of [...userSkills, ...repoSkills]) byName.set(s.name, s);
+    this.skills = [...byName.values()];
   }
 
-  async run(task: Task): Promise<Result<Trajectory, Error>> {
+  async run(task: Task, signal?: AbortSignal): Promise<Result<Trajectory, Error>> {
     console.log(`[SessionManager] Starting task: ${task.description}`);
 
     // Initialize workspace
@@ -172,7 +193,7 @@ export class SessionManager {
         sessionIds.push(context.sessionId);
         this.state.context = context;
 
-        const trajectoryResult = await this.config.agentRuntime.run(task, context);
+        const trajectoryResult = await this.config.agentRuntime.run(task, context, signal);
         if (!trajectoryResult.ok) {
           this.state.status = 'failed';
           await this.teardown('failure');
@@ -180,6 +201,17 @@ export class SessionManager {
         }
         lastTrajectory = trajectoryResult.value;
         this.state.trajectory = lastTrajectory;
+
+        // The user interrupted (Ctrl+C): land the run as cancelled instead of
+        // running another gate attempt. The trajectory already carries the
+        // cancelled outcome; discard the worktree like a failure unless the
+        // caller wants it kept.
+        if (lastTrajectory.outcome === 'cancelled') {
+          this.state.status = 'cancelled';
+          deleteCheckpoint(this.config.repoPath, task.id);
+          await this.teardown('cancelled');
+          return ok(lastTrajectory);
+        }
 
         // Final verification gate for this attempt
         const gateResult = await this.config.verificationEngine.verifyWithBudget(
@@ -237,11 +269,69 @@ export class SessionManager {
   }
 
   /**
+   * Produce a plan without executing it (Slice 4 plan phase). This is the
+   * read-only half of the plan/build split: a fresh workspace is created,
+   * the read-only runtime explores the repo and answers with a plan, a
+   * `PlanProduced` event is recorded, and the workspace is discarded — no
+   * gate, no retry loop, no merge-back, because nothing was allowed to
+   * change. The caller renders the plan and owns the approval step (`/build`).
+   */
+  async plan(
+    task: Task,
+    signal?: AbortSignal,
+  ): Promise<Result<{ plan: string; trajectory: Trajectory }, Error>> {
+    const runtime = this.config.planRuntime ?? this.config.agentRuntime;
+
+    const workspaceResult = await this.config.workspaceManager.createWorkspace(this.config.repoPath);
+    if (!workspaceResult.ok) {
+      return err(workspaceResult.error);
+    }
+    const workspace = workspaceResult.value;
+
+    await runtime.initialize(workspace);
+
+    const contextResult = await this.gatherInitialContext(task, workspace);
+    if (!contextResult.ok) {
+      await this.config.workspaceManager.destroyWorkspace(workspace.id);
+      await runtime.shutdown();
+      return err(contextResult.error);
+    }
+    const context = contextResult.value;
+    this.config.eventStore?.beginSession(task.id, context.sessionId);
+
+    const trajectoryResult = await runtime.run(task, context, signal);
+    if (!trajectoryResult.ok) {
+      await this.config.workspaceManager.destroyWorkspace(workspace.id);
+      await this.config.eventStore?.endSession();
+      await runtime.shutdown();
+      return err(trajectoryResult.error);
+    }
+    const trajectory = trajectoryResult.value;
+    const plan = trajectory.finalAnswer ?? '';
+
+    this.config.eventStore?.append({
+      id: ulid(),
+      timestamp: now(),
+      type: 'PlanProduced',
+      taskId: task.id,
+      sessionId: context.sessionId,
+      payload: { plan },
+    });
+
+    await this.config.eventStore?.endSession();
+    // Nothing was allowed to change: discard the worktree instead of merging.
+    await this.config.workspaceManager.destroyWorkspace(workspace.id);
+    await runtime.shutdown();
+
+    return ok({ plan, trajectory });
+  }
+
+  /**
    * Continue a previous run from its latest checkpoint: re-attach the saved
    * worktree, re-initialize the runtime, and pick the attempt loop back up at
    * `attemptsCompleted + 1` with the accumulated failure feedback.
    */
-  async resumeTask(checkpoint: RunCheckpoint): Promise<Result<Trajectory, Error>> {
+  async resumeTask(checkpoint: RunCheckpoint, signal?: AbortSignal): Promise<Result<Trajectory, Error>> {
     const { task } = checkpoint;
     console.log(
       `[SessionManager] Resuming task ${task.id} from attempt ${checkpoint.attemptsCompleted + 1}/${this.config.maxTurns}`,
@@ -311,7 +401,7 @@ export class SessionManager {
         sessionIds.push(context.sessionId);
         this.state.context = context;
 
-        const trajectoryResult = await this.config.agentRuntime.run(task, context);
+        const trajectoryResult = await this.config.agentRuntime.run(task, context, signal);
         if (!trajectoryResult.ok) {
           this.state.status = 'failed';
           await this.teardown('failure');
@@ -319,6 +409,17 @@ export class SessionManager {
         }
         lastTrajectory = trajectoryResult.value;
         this.state.trajectory = lastTrajectory;
+
+        // The user interrupted (Ctrl+C): land the run as cancelled instead of
+        // running another gate attempt. The trajectory already carries the
+        // cancelled outcome; discard the worktree like a failure unless the
+        // caller wants it kept.
+        if (lastTrajectory.outcome === 'cancelled') {
+          this.state.status = 'cancelled';
+          deleteCheckpoint(this.config.repoPath, task.id);
+          await this.teardown('cancelled');
+          return ok(lastTrajectory);
+        }
 
         const gateResult = await this.config.verificationEngine.verifyWithBudget(
           context,
@@ -532,7 +633,7 @@ export class SessionManager {
    * (unless --keep-worktree, so the user can inspect what went wrong). A
    * failed merge keeps the worktree and surfaces the path.
    */
-  private async teardown(outcome: 'success' | 'failure'): Promise<void> {
+  private async teardown(outcome: 'success' | 'failure' | 'cancelled'): Promise<void> {
     const workspace = this.state?.workspace;
     if (workspace) {
       if (outcome === 'success' && !this.config.keepWorktree) {
@@ -591,11 +692,20 @@ export function createSessionManager(config: Partial<SessionManagerConfig> & {
     contextEngine: config.contextEngine,
     verificationEngine: config.verificationEngine,
     memoryStore:
-      config.memoryStore ?? createMemoryStore({ rootDir: join(config.repoPath, '.guppy', 'memory') }),
+      config.memoryStore ??
+      createMemoryStore({
+        rootDir: join(config.repoPath, '.guppy', 'memory'),
+        // Fixes distill into the per-user global store too, so they follow
+        // the user across repos (cross-repo memory).
+        secondaryRootDir: config.userMemoryDir ?? defaultMemoryDir(),
+      }),
     repoPath: config.repoPath,
     maxTurns: config.maxTurns ?? 20,
     verificationBudget: config.verificationBudget ?? 3,
     keepWorktree: config.keepWorktree ?? false,
+    ...(config.planRuntime ? { planRuntime: config.planRuntime } : {}),
+    ...(config.userSkillsDir ? { userSkillsDir: config.userSkillsDir } : {}),
+    ...(config.userMemoryDir ? { userMemoryDir: config.userMemoryDir } : {}),
     ...(config.commitMessage ? { commitMessage: config.commitMessage } : {}),
     ...(config.noCommit ? { noCommit: config.noCommit } : {}),
     ...(config.force ? { force: true } : {}),

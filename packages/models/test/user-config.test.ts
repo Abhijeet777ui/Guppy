@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   defaultConfigPath,
+  hasAnyApiKey,
+  isNoKeyProvider,
   loadUserConfig,
   maskKey,
   resolveRuntimeOptions,
@@ -105,5 +107,56 @@ describe('resolveRuntimeOptions', () => {
     expect(resolveRuntimeOptions({}, { providers: {} })).toEqual({
       model: 'claude-3-5-sonnet',
     });
+  });
+});
+
+describe('hasAnyApiKey / isNoKeyProvider', () => {
+  it('detects a configured preset key', () => {
+    expect(hasAnyApiKey(CONFIG)).toBe(true);
+  });
+
+  it('reports keyless for an empty config with no env vars', () => {
+    const keys = [
+      'OPENAI_API_KEY',
+      'OPENROUTER_API_KEY',
+      'NVIDIA_API_KEY',
+      'PRIME_API_KEY',
+      'ANTHROPIC_API_KEY',
+      'GROQ_API_KEY',
+      'GEMINI_API_KEY',
+      'DEEPSEEK_API_KEY',
+      'MISTRAL_API_KEY',
+      'XAI_API_KEY',
+      'CEREBRAS_API_KEY',
+      'TOGETHER_API_KEY',
+      'FIREWORKS_API_KEY',
+    ];
+    const originals = new Map(keys.map((k) => [k, process.env[k]]));
+    for (const k of keys) delete process.env[k];
+    try {
+      expect(hasAnyApiKey({ providers: {} })).toBe(false);
+    } finally {
+      for (const [k, v] of originals) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  });
+
+  it('detects a known provider env var', () => {
+    const original = process.env.GROQ_API_KEY;
+    process.env.GROQ_API_KEY = 'env-key';
+    try {
+      expect(hasAnyApiKey({ providers: {} })).toBe(true);
+    } finally {
+      if (original === undefined) delete process.env.GROQ_API_KEY;
+      else process.env.GROQ_API_KEY = original;
+    }
+  });
+
+  it('treats local providers as keyless-ok', () => {
+    expect(isNoKeyProvider('ollama')).toBe(true);
+    expect(isNoKeyProvider('groq')).toBe(false);
+    expect(isNoKeyProvider(undefined)).toBe(false);
   });
 });

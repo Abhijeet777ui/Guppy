@@ -12,6 +12,7 @@ import type {
 import { now, ulid, ok, err } from '@guppy/contracts';
 import Docker from 'dockerode';
 import { createWriteStream, createReadStream, existsSync, mkdirSync, rmSync, cpSync, readdirSync, readFileSync, realpathSync } from 'fs';
+import { homedir } from 'os';
 import { join, dirname, basename, relative, resolve, sep } from 'path';
 import { fileURLToPath } from 'url';
 import { execa } from 'execa';
@@ -55,7 +56,12 @@ export interface WorktreeInfo {
 
 const DEFAULT_CONFIG: WorkspaceConfig = {
   dockerImage: 'guppy/executor:latest',
-  worktreeBase: join(process.cwd(), '.guppy', 'worktrees'),
+  // Worktrees must live OUTSIDE the source repo: Node's cpSync refuses to
+  // copy a directory into its own subtree (ERR_FS_CP_EINVAL), so a base under
+  // cwd breaks every non-git repo (e.g. `apps/control-plane`, which has no
+  // `.git` of its own). The home dir is also outside OneDrive/cloud-synced
+  // folders, so worktree I/O doesn't churn sync or hit placeholder locks.
+  worktreeBase: join(homedir(), '.guppy', 'worktrees'),
   networkMode: 'bridge',
   memoryLimit: '4g',
   cpuLimit: 2,

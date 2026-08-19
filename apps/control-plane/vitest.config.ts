@@ -1,4 +1,4 @@
-import { defineConfig } from 'vitest/config';
+import { defaultExclude, defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
@@ -7,5 +7,9 @@ export default defineConfig({
     // and these tests flake with "Test timed out in 5000ms".
     testTimeout: 30_000,
     hookTimeout: 30_000,
+    // Worktrees materialize fixture copies (which include *.test.ts files)
+    // under `.guppy/`; a leftover worktree must never be discovered as a
+    // duplicate test. Exclude `.guppy/` and any worktrees dir from discovery.
+    exclude: [...defaultExclude, '**/.guppy/**', '**/worktrees/**'],
   },
 });

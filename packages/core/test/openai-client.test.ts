@@ -626,6 +626,60 @@ describe('OpenAIChatClient', () => {
       await close(server);
     }
   });
+
+  it('gives up on a stream that sends headers then stalls (idle timeout)', async () => {
+    const server = createServer((_req, res) => {
+      // Headers first (so the request-timeout path is already cleared), then
+      // silence — the classic mid-stream stall. The idle timeout must surface
+      // it instead of hanging forever.
+      res.statusCode = 200;
+      res.setHeader('content-type', 'text/event-stream');
+      res.flushHeaders();
+    });
+    const url = await listen(server);
+    try {
+      const client = new OpenAIChatClient({
+        provider: 'fake',
+        model: 'fake/nemotron',
+        baseUrl: url,
+        timeoutMs: 60_000, // Long pre-headers timeout proves the idle path fires
+        streamIdleTimeoutMs: 150,
+        maxRetries: 0,
+      });
+      const startedAt = Date.now();
+      await expect(client.completeStream([{ role: 'user', content: 'hi' }])).rejects.toThrow(/stalled/);
+      expect(Date.now() - startedAt).toBeLessThan(5_000);
+    } finally {
+      server.closeAllConnections?.();
+      await close(server);
+    }
+  });
+
+  it('gives up on a non-streaming body that stalls after headers', async () => {
+    const server = createServer((_req, res) => {
+      res.statusCode = 200;
+      res.setHeader('content-type', 'application/json');
+      res.flushHeaders();
+      // Never write the body: response.json() would hang without the idle race.
+    });
+    const url = await listen(server);
+    try {
+      const client = new OpenAIChatClient({
+        provider: 'fake',
+        model: 'fake/nemotron',
+        baseUrl: url,
+        timeoutMs: 60_000,
+        streamIdleTimeoutMs: 150,
+        maxRetries: 0,
+      });
+      const startedAt = Date.now();
+      await expect(client.complete([{ role: 'user', content: 'hi' }])).rejects.toThrow(/stalled/);
+      expect(Date.now() - startedAt).toBeLessThan(5_000);
+    } finally {
+      server.closeAllConnections?.();
+      await close(server);
+    }
+  });
 });
 
 describe('RateLimiter', () => {

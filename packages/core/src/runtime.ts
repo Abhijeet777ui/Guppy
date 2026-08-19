@@ -28,8 +28,8 @@ import type { EventStore } from '@guppy/event-store';
 import type { WorkspaceManager } from '@guppy/workspace';
 import type { ChatMessage, CompletionResult } from './openai-client.js';
 import type { ModelConfig } from './model.js';
-import { OpenAIChatClient } from './openai-client.js';
-import { buildGuppyTools, type GuppyTool, type ToolExecution } from './tools.js';
+import { CancelledError, OpenAIChatClient } from './openai-client.js';
+import { buildGuppyTools, READ_ONLY_TOOL_NAMES, type GuppyTool, type ToolExecution } from './tools.js';
 
 export interface CoreRuntimeConfig {
   eventStore: EventStore;
@@ -44,11 +44,24 @@ export interface CoreRuntimeConfig {
    */
   stream?: boolean;
   /**
+   * Read-only mode: only the non-mutating native tools are exposed, and
+   * `extraTools` (which can't be proven read-only) are dropped. Used by the
+   * Slice 4 plan phase — a plan can explore the workspace but can never edit
+   * it, run commands, or patch.
+   */
+  readOnly?: boolean;
+  /**
    * When set, dump the exact `{ model, messages, tools }` payload before every
    * model call into this directory (one JSON file per turn). Used by the bench
    * to score context health with ContextOps before/after inference.
    */
   contextCaptureDir?: string;
+  /**
+   * External tools appended to the native set in initialize() — e.g. MCP
+   * server tools bridged by `@guppy/mcp`. They share the same loop, events,
+   * and result plumbing as the built-ins.
+   */
+  extraTools?: GuppyTool[];
 }
 
 const MAX_TOOL_RESULT_CHARS = 20_000;
@@ -66,10 +79,21 @@ export class CoreAgentRuntime implements AgentRuntime {
 
   async initialize(workspace: Workspace): Promise<void> {
     this.workspace = workspace;
-    this.tools = buildGuppyTools(this.config.workspaceManager);
+    const native = buildGuppyTools(this.config.workspaceManager);
+    if (this.config.readOnly) {
+      // Plan mode: expose only the provably read-only native tools. External
+      // tools are excluded because their mutation behavior is unknown.
+      this.tools = native.filter((t) => READ_ONLY_TOOL_NAMES.has(t.name));
+    } else {
+      this.tools = [...native, ...(this.config.extraTools ?? [])];
+    }
   }
 
-  async run(task: Task, context: Context): Promise<Result<Trajectory, Error>> {
+  async run(
+    task: Task,
+    context: Context,
+    signal?: AbortSignal,
+  ): Promise<Result<Trajectory, Error>> {
     if (!this.workspace) {
       return err(new Error('CoreAgentRuntime.initialize() must be called before run()'));
     }
@@ -102,9 +126,16 @@ export class CoreAgentRuntime implements AgentRuntime {
     const tokensByModel: Record<string, number> = {};
     let finished = false;
     let lastError = '';
+    let finalAnswer = '';
+    let cancelled = false;
 
     try {
       for (let turn = 0; turn < this.config.maxTurns; turn++) {
+        // The caller (Ctrl+C in chat) can stop the whole run between turns.
+        if (signal?.aborted) {
+          cancelled = true;
+          break;
+        }
         this.captureContext(messages, turn, startedAt);
         const callId = ulid();
 
@@ -131,9 +162,10 @@ export class CoreAgentRuntime implements AgentRuntime {
                 });
               }
             },
+            signal,
           );
         } else {
-          completion = await this.client.complete(messages, this.tools.map((t) => t.definition));
+          completion = await this.client.complete(messages, this.tools.map((t) => t.definition), signal);
         }
 
         const delta = completion.usage.inputTokens + completion.usage.outputTokens;
@@ -155,6 +187,17 @@ export class CoreAgentRuntime implements AgentRuntime {
         });
 
         if (completion.toolCalls.length === 0) {
+          finalAnswer = completion.content ?? '';
+          if (finalAnswer) {
+            emit({
+              id: ulid(),
+              timestamp: now(),
+              type: 'FinalAnswer',
+              taskId: task.id,
+              sessionId,
+              payload: { text: finalAnswer },
+            });
+          }
           finished = true;
           break;
         }
@@ -166,6 +209,11 @@ export class CoreAgentRuntime implements AgentRuntime {
         });
 
         for (const call of completion.toolCalls) {
+          // Don't start a new tool after the caller aborted (Ctrl+C).
+          if (signal?.aborted) {
+            cancelled = true;
+            break;
+          }
           const tool = this.tools.find((t) => t.name === call.function.name);
           const args = parseArgs(call.function.arguments);
           const toolStart = Date.now();
@@ -224,12 +272,25 @@ export class CoreAgentRuntime implements AgentRuntime {
             ),
           });
         }
+        // The model may have returned tool calls right as the caller aborted;
+        // don't start the next turn's completion after a break.
+        if (cancelled) break;
       }
     } catch (e) {
-      lastError = e instanceof Error ? e.message : String(e);
+      if (e instanceof CancelledError || (signal?.aborted ?? false)) {
+        cancelled = true;
+      } else {
+        lastError = e instanceof Error ? e.message : String(e);
+      }
     }
 
-    const outcome: Trajectory['outcome'] = lastError ? 'failure' : finished ? 'success' : 'partial';
+    const outcome: Trajectory['outcome'] = cancelled
+      ? 'cancelled'
+      : lastError
+        ? 'failure'
+        : finished
+          ? 'success'
+          : 'partial';
     const metrics: TrajectoryMetrics = {
       passes: 0,
       failures: 0,
@@ -253,11 +314,14 @@ export class CoreAgentRuntime implements AgentRuntime {
         metrics,
         lastGatePassed: outcome === 'success',
         ...(lastError ? { error: lastError } : {}),
+        ...(finalAnswer ? { finalAnswer } : {}),
       },
     });
 
     if (lastError) {
       console.error(`[CoreAgentRuntime] run failed: ${lastError}`);
+    } else if (cancelled) {
+      console.log('[CoreAgentRuntime] run cancelled');
     }
 
     return ok({
@@ -270,6 +334,7 @@ export class CoreAgentRuntime implements AgentRuntime {
       startedAt,
       completedAt: now(),
       ...(lastError ? { error: lastError } : {}),
+      ...(finalAnswer ? { finalAnswer } : {}),
     });
   }
 

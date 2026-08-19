@@ -11,13 +11,15 @@
  */
 
 import { createInterface } from 'node:readline';
-import { resolve } from 'node:path';
+import { readdirSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import chalk from 'chalk';
 import {
   now,
   ulid,
   type AgentRuntime,
   type Task,
+  type ULID,
   type VerificationLevel,
 } from '@guppy/contracts';
 import type { EventStore } from '@guppy/event-store';
@@ -28,6 +30,7 @@ import { ContextEngine } from '@guppy/context-engine';
 import { createVerificationEngine } from '@guppy/verification-engine';
 import { createPiAdapter, createPrimeDaemonRuntime } from '@guppy/agent-runtime';
 import { createCoreRuntime } from '@guppy/core';
+import type { McpBridge } from '@guppy/mcp';
 import type { ModelConfig } from '@guppy/core';
 import {
   THINKING_LEVELS,
@@ -44,6 +47,98 @@ import type { ThinkingLevel } from '@guppy/models';
 import type { Model } from '@earendil-works/pi-ai';
 import { createSessionManager, type SessionManager } from './session-manager.js';
 import { attachLiveStream } from './live-stream.js';
+import { analyzeCaptureFile } from '@guppy/bench-runner';
+
+// ---------------------------------------------------------------------------
+// Context-savings tracker (ContextOps token savings for run/chat)
+// ---------------------------------------------------------------------------
+
+/** Result of scoring whatever new captures appeared since the last call. */
+export interface SavingsDelta {
+  /** Estimated tokens saved by captures scored in this call (0 when none). */
+  saved: number;
+  /** Running session total. */
+  total: number;
+  /** True once ContextOps has successfully scored at least one capture. */
+  available: boolean;
+  /** Scoring tool + version, e.g. "contextops@0.3.4". */
+  tool?: string;
+}
+
+/**
+ * Scores the core runtime's `{ model, messages, tools }` capture dumps through
+ * ContextOps (via the same bridge `@guppy/bench-runner` ships) and accumulates
+ * an estimated tokens-saved total. Strictly best-effort and never fatal: if
+ * Python or ContextOps is missing, scoring stops and the figure is omitted.
+ */
+export class ContextSavingsTracker {
+  private scored = new Set<string>();
+  private total = 0;
+  private availableFlag = false;
+  private unavailableFlag = false;
+  private tool: string | undefined;
+
+  constructor(
+    private readonly dir: string,
+    private readonly python = 'python',
+    private readonly timeoutMs = 10_000,
+  ) {}
+
+  /** True when scoring has succeeded at least once and hasn't since failed. */
+  private get available(): boolean {
+    return this.availableFlag && !this.unavailableFlag;
+  }
+
+  /** Score any capture files not yet seen. Never throws. */
+  async scoreNew(): Promise<SavingsDelta> {
+    if (this.unavailableFlag) {
+      return { saved: 0, total: this.total, available: this.available };
+    }
+
+    let files: string[];
+    try {
+      files = readdirSync(this.dir)
+        .filter((f) => f.endsWith('.json') && !this.scored.has(f))
+        .sort();
+    } catch {
+      // No capture dir yet (or unreadable) — nothing to score.
+      return { saved: 0, total: this.total, available: this.available };
+    }
+
+    let saved = 0;
+    for (const file of files) {
+      this.scored.add(file);
+      try {
+        const analysis = await analyzeCaptureFile(join(this.dir, file), this.python, this.timeoutMs);
+        saved += analysis.tokensSaved;
+        this.total += analysis.tokensSaved;
+        this.tool = analysis.tool;
+        this.availableFlag = true;
+      } catch {
+        // Python / ContextOps unavailable — stop spawning doomed subprocesses.
+        this.unavailableFlag = true;
+        return { saved, total: this.total, available: this.available };
+      }
+    }
+
+    return {
+      saved,
+      total: this.total,
+      available: this.available,
+      ...(this.tool ? { tool: this.tool } : {}),
+    };
+  }
+
+  /** Running session total (0 until the first successful score). */
+  get cumulative(): number {
+    return this.total;
+  }
+
+  /** True once scoring has proven ContextOps is installed and working. */
+  get isAvailable(): boolean {
+    return this.available;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Runtime factory (shared by `guppy run` and `guppy chat`)
@@ -72,6 +167,15 @@ export interface RuntimeOptions {
   thinkingLevel?: ThinkingLevel;
   /** Model↔tool turns within one attempt (pi adapter). */
   maxTurns: number;
+  /** Directory for `{ model, messages, tools }` dumps (ContextOps savings). */
+  contextCaptureDir?: string;
+  /**
+   * Connected MCP servers whose tools join the loop (built by `@guppy/mcp`).
+   * Optional and opt-in: no bridge, no external tools. The bridge is owned by
+   * the caller — `createChatEngine` closes it on shutdown but never on a
+   * /model rebuild, so the same external tools survive runtime switches.
+   */
+  mcpBridge?: McpBridge | null;
 }
 
 function createDefaultModel(modelId: string): Model<any> {
@@ -120,8 +224,27 @@ export function buildAgentRuntime(
     });
   }
   // Default: Guppy's own in-process agent core (no pi, no prime).
-  // A requested thinking level maps to the provider-specific reasoning fields
-  // via the catalog; unknown/non-reasoning models silently skip it.
+  return createCoreRuntime({
+    eventStore,
+    workspaceManager,
+    ...(options.mcpBridge?.tools && options.mcpBridge.tools.length > 0
+      ? { extraTools: options.mcpBridge.tools }
+      : {}),
+    model: coreModelConfig(options),
+    // Stream by default for the CLI; `--no-stream` turns it off. The bench
+    // builds its own runtime, so it stays non-streaming unless it opts in.
+    stream: options.stream !== false,
+    maxTurns: 30,
+    ...(options.contextCaptureDir ? { contextCaptureDir: options.contextCaptureDir } : {}),
+  });
+}
+
+/**
+ * Model config shared by the build runtime and the read-only plan runtime.
+ * A requested thinking level maps to the provider-specific reasoning fields
+ * via the catalog; unknown/non-reasoning models silently skip it.
+ */
+function coreModelConfig(options: RuntimeOptions): ModelConfig {
   const thinkingExtra =
     options.thinkingLevel !== undefined
       ? selectModel({
@@ -130,26 +253,40 @@ export function buildAgentRuntime(
           thinkingLevel: options.thinkingLevel,
         })?.extraBody
       : undefined;
+  return {
+    provider: options.provider ?? 'openai',
+    model: options.model,
+    ...(options.baseUrl ? { baseUrl: options.baseUrl } : {}),
+    ...(options.apiKey ? { apiKey: options.apiKey } : {}),
+    ...(thinkingExtra !== undefined ? { extraBody: thinkingExtra } : {}),
+    ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
+    ...(options.maxTokens !== undefined ? { maxTokens: options.maxTokens } : {}),
+    ...(options.maxRetries !== undefined ? { maxRetries: options.maxRetries } : {}),
+    ...(options.retryBaseDelayMs !== undefined ? { retryBaseDelayMs: options.retryBaseDelayMs } : {}),
+    ...(options.retryMaxDelayMs !== undefined ? { retryMaxDelayMs: options.retryMaxDelayMs } : {}),
+    ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+  };
+}
+
+/**
+ * A dedicated read-only core runtime for the plan phase (Slice 4). Always the
+ * core runtime, and always read-only, so a plan can explore the repo but can
+ * never edit it — regardless of which runtime (`core|prime|pi`) executes the
+ * build. External (MCP) tools are dropped by the read-only filter.
+ */
+export function buildPlanRuntime(
+  options: RuntimeOptions,
+  eventStore: EventStore,
+  workspaceManager: WorkspaceManager,
+): AgentRuntime {
   return createCoreRuntime({
     eventStore,
     workspaceManager,
-    model: {
-      provider: options.provider ?? 'openai',
-      model: options.model,
-      ...(options.baseUrl ? { baseUrl: options.baseUrl } : {}),
-      ...(options.apiKey ? { apiKey: options.apiKey } : {}),
-      ...(thinkingExtra !== undefined ? { extraBody: thinkingExtra } : {}),
-      ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
-      ...(options.maxTokens !== undefined ? { maxTokens: options.maxTokens } : {}),
-      ...(options.maxRetries !== undefined ? { maxRetries: options.maxRetries } : {}),
-      ...(options.retryBaseDelayMs !== undefined ? { retryBaseDelayMs: options.retryBaseDelayMs } : {}),
-      ...(options.retryMaxDelayMs !== undefined ? { retryMaxDelayMs: options.retryMaxDelayMs } : {}),
-      ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
-    },
-    // Stream by default for the CLI; `--no-stream` turns it off. The bench
-    // builds its own runtime, so it stays non-streaming unless it opts in.
+    model: coreModelConfig(options),
     stream: options.stream !== false,
     maxTurns: 30,
+    readOnly: true,
+    ...(options.contextCaptureDir ? { contextCaptureDir: options.contextCaptureDir } : {}),
   });
 }
 
@@ -166,21 +303,43 @@ export interface ChatTurnResult {
   passes?: number;
   failures?: number;
   error?: string;
+  /** The model's final prose answer, when the run produced one. */
+  finalAnswer?: string;
+  /** Estimated tokens saved this turn (ContextOps), when available. */
+  tokensSaved?: number;
+  /** Running session-total saved tokens (ContextOps), when available. */
+  tokensSavedTotal?: number;
 }
 
 /**
  * Run a single chat message through the full gated loop. Never throws: a
  * crashing runtime or failed gate degrades to a result the REPL can print.
  */
-export async function runChatTurn(sessionManager: SessionManager, task: Task): Promise<ChatTurnResult> {
+export async function runChatTurn(
+  sessionManager: SessionManager,
+  task: Task,
+  savings?: ContextSavingsTracker,
+  signal?: AbortSignal,
+): Promise<ChatTurnResult> {
   const startedAt = Date.now();
   try {
-    const result = await sessionManager.run(task);
+    const result = await sessionManager.run(task, signal);
     const durationMs = Date.now() - startedAt;
     if (!result.ok) {
       return { ok: false, durationMs, error: result.error.message };
     }
     const t = result.value;
+    // Score any new context captures (best-effort; omitted when ContextOps is
+    // unavailable) so the footer can show the turn's savings and the total.
+    let tokensSaved: number | undefined;
+    let tokensSavedTotal: number | undefined;
+    if (savings) {
+      const delta = await savings.scoreNew();
+      if (delta.available) {
+        tokensSaved = delta.saved;
+        tokensSavedTotal = delta.total;
+      }
+    }
     return {
       ok: true,
       outcome: t.outcome,
@@ -189,6 +348,9 @@ export async function runChatTurn(sessionManager: SessionManager, task: Task): P
       toolCalls: t.metrics.toolCalls,
       passes: t.metrics.passes,
       failures: t.metrics.failures,
+      ...(t.finalAnswer ? { finalAnswer: t.finalAnswer } : {}),
+      ...(tokensSaved !== undefined ? { tokensSaved } : {}),
+      ...(tokensSavedTotal !== undefined ? { tokensSavedTotal } : {}),
     };
   } catch (e) {
     return {
@@ -197,6 +359,151 @@ export async function runChatTurn(sessionManager: SessionManager, task: Task): P
       error: e instanceof Error ? e.message : String(e),
     };
   }
+}
+
+export interface PlanTurnResult {
+  ok: boolean;
+  /** The produced plan (markdown). Empty when the model produced no final answer. */
+  plan?: string;
+  /** The plan task id — the anchor for the `PlanRevised` audit trail. */
+  taskId?: ULID;
+  durationMs: number;
+  tokens?: number;
+  toolCalls?: number;
+  error?: string;
+  /** Estimated tokens saved this turn (ContextOps), when available. */
+  tokensSaved?: number;
+}
+
+/**
+ * Run a single message through the read-only plan phase (Slice 4). No gate,
+ * no edits, no merge — the result is the plan text plus its telemetry. Never
+ * throws: a crashing runtime degrades to a failed result the REPL can print.
+ */
+export async function runPlanTurn(
+  sessionManager: SessionManager,
+  task: Task,
+  savings?: ContextSavingsTracker,
+  signal?: AbortSignal,
+): Promise<PlanTurnResult> {
+  const startedAt = Date.now();
+  try {
+    const result = await sessionManager.plan(task, signal);
+    const durationMs = Date.now() - startedAt;
+    if (!result.ok) {
+      return { ok: false, durationMs, error: result.error.message };
+    }
+    let tokensSaved: number | undefined;
+    if (savings) {
+      const delta = await savings.scoreNew();
+      if (delta.available) tokensSaved = delta.saved;
+    }
+    return {
+      ok: true,
+      plan: result.value.plan,
+      taskId: task.id,
+      durationMs,
+      tokens: result.value.trajectory.metrics.tokensTotal,
+      toolCalls: result.value.trajectory.metrics.toolCalls,
+      ...(tokensSaved !== undefined ? { tokensSaved } : {}),
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      durationMs: Date.now() - startedAt,
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
+}
+
+/**
+ * Record the approval of a plan right before the build run executes it. The
+ * event store auto-manages the session, so appending with the build task's
+ * id opens that session's log and later folds the approval into its trace.
+ */
+export function emitPlanApproved(
+  eventStore: EventStore,
+  taskId: ULID,
+  sessionId: ULID,
+  plan: string,
+): void {
+  eventStore.append({
+    id: ulid(),
+    timestamp: now(),
+    type: 'PlanApproved',
+    taskId,
+    sessionId,
+    payload: { plan },
+  });
+}
+
+/**
+ * Record a human's revision of the model-produced plan as a durable event,
+ * with a line diff between the two so the edit trail is auditable. Emitted
+ * under the plan task's id with a fresh session (the plan session is already
+ * closed; the store auto-opens a new one).
+ */
+export function emitPlanRevised(
+  eventStore: EventStore,
+  taskId: ULID,
+  previous: string,
+  revised: string,
+): void {
+  eventStore.append({
+    id: ulid(),
+    timestamp: now(),
+    type: 'PlanRevised',
+    taskId,
+    sessionId: ulid(),
+    payload: { previous, revised, diff: diffLines(previous, revised) },
+  });
+}
+
+/**
+ * A minimal LCS line diff, formatted for the event log: `  ` context,
+ * `- ` removed, `+ ` added. O(n·m); fine for plan-sized text, and it degrades
+ * to a coarse add/remove summary past a line threshold so a pathological
+ * input can't blow the DP table.
+ */
+export function diffLines(before: string, after: string): string {
+  const a = before.split('\n');
+  const b = after.split('\n');
+  if (a.length * b.length > 4_000_000) {
+    return `${a.length - 1} lines removed\n+ ${b.length - 1} lines added`;
+  }
+  const n = a.length;
+  const m = b.length;
+  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i]![j] = a[i] === b[j] ? dp[i + 1]![j + 1]! + 1 : Math.max(dp[i + 1]![j]!, dp[i]![j + 1]!);
+    }
+  }
+  const out: string[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < n && j < m) {
+    if (a[i] === b[j]) {
+      out.push(`  ${a[i]}`);
+      i++;
+      j++;
+    } else if (dp[i + 1]![j]! >= dp[i]![j + 1]!) {
+      out.push(`- ${a[i]}`);
+      i++;
+    } else {
+      out.push(`+ ${b[j]}`);
+      j++;
+    }
+  }
+  while (i < n) {
+    out.push(`- ${a[i]}`);
+    i++;
+  }
+  while (j < m) {
+    out.push(`+ ${b[j]}`);
+    j++;
+  }
+  return out.join('\n');
 }
 
 // ---------------------------------------------------------------------------
@@ -246,10 +553,17 @@ export interface ChatEngine {
   rebuild(mutate: () => void): Promise<void>;
   /** Shut down the runtime and close the event store. */
   shutdown(): Promise<void>;
+  /** Accumulates ContextOps token savings across turns (best-effort). */
+  savings: ContextSavingsTracker;
 }
 
 export function createChatEngine(options: ChatOptions): ChatEngine {
   const repoPath = resolve(options.repoPath);
+  // Capture the exact model payloads so the chat footer can report ContextOps
+  // token savings (best-effort; the figure is omitted when scoring is
+  // unavailable). A stable per-repo dir keeps filenames unique across turns.
+  options.contextCaptureDir = resolve(repoPath, '.guppy', 'context');
+  const savings = new ContextSavingsTracker(options.contextCaptureDir);
   const eventStore = createEventStore({ rootDir: resolve(repoPath, '.guppy', 'events') });
   const workspaceManager = createWorkspaceManager({
     dockerImage: 'guppy/executor:latest',
@@ -269,6 +583,9 @@ export function createChatEngine(options: ChatOptions): ChatEngine {
     createSessionManager({
       repoPath,
       agentRuntime,
+      // The plan phase gets a dedicated read-only core runtime so /plan never
+      // edits the repo, whatever the build runtime is.
+      planRuntime,
       contextEngine,
       verificationEngine,
       eventStore,
@@ -284,6 +601,7 @@ export function createChatEngine(options: ChatOptions): ChatEngine {
     });
 
   let agentRuntime = buildAgentRuntime(options, eventStore, workspaceManager);
+  let planRuntime = buildPlanRuntime(options, eventStore, workspaceManager);
   let sessionManager = createSession();
 
   return {
@@ -300,14 +618,20 @@ export function createChatEngine(options: ChatOptions): ChatEngine {
     },
     async rebuild(mutate: () => void): Promise<void> {
       await agentRuntime.shutdown();
+      await planRuntime.shutdown();
       mutate();
       agentRuntime = buildAgentRuntime(options, eventStore, workspaceManager);
+      planRuntime = buildPlanRuntime(options, eventStore, workspaceManager);
       sessionManager = createSession();
     },
     async shutdown(): Promise<void> {
       await agentRuntime.shutdown();
+      await planRuntime.shutdown();
       await eventStore.close();
+      // MCP servers are child processes; close them or they outlive the parent.
+      await options.mcpBridge?.close();
     },
+    savings,
   };
 }
 
@@ -325,6 +649,18 @@ export async function runChat(options: ChatOptions): Promise<void> {
   let verificationLevel = options.verificationLevel;
   let shuttingDown = false;
   let busy = false;
+  // Plan/build mode (Slice 4): /plan turns messages into read-only plan runs;
+  // /build approves the last plan and executes it through the full gated loop.
+  let mode: 'plan' | 'build' = 'build';
+  let pendingPlan: string | null = null;
+  // The model-produced plan (the last PlanProduced), kept separate from
+  // pendingPlan so a revision's diff is always against the model, not a
+  // prior human edit.
+  let modelPlan: string | null = null;
+  let planTaskId: ULID | null = null;
+  // True while the user is revising the plan by hand (the next input line is
+  // captured verbatim as the revised plan, no model call).
+  let editingPlan = false;
 
   // -------------------------------------------------------------------------
   // Model catalog commands (/models, /provider, /model)
@@ -451,12 +787,44 @@ export async function runChat(options: ChatOptions): Promise<void> {
       chalk.gray('  /thinking [level]  show or set reasoning level (off|minimal|low|medium|high|xhigh|max)'),
     );
     console.log(chalk.gray('  /verify <level>    set the verification level (0-5; 6 formal = unsupported)'));
+    console.log(chalk.gray('  /plan              plan a task read-only (no edits) before executing'));
+    console.log(chalk.gray('  /build             approve and run the last plan, or return to build mode'));
+    console.log(chalk.gray('  /edit [text]       revise the pending plan by hand, then /build to run it'));
     console.log(chalk.gray('  /exit, /quit       leave the chat'));
     console.log(chalk.gray('  anything else      run it as a task through the gated agent loop'));
   };
 
+  const runTask = async (task: Task): Promise<void> => {
+    const result = await runChatTurn(engine.sessionManager, task, engine.savings);
+    if (result.ok) {
+      if (result.finalAnswer) {
+        console.log(`\n${result.finalAnswer}`);
+      }
+      const status =
+        result.outcome === 'success'
+          ? chalk.green(`completed (${result.outcome})`)
+          : result.outcome === 'cancelled'
+            ? chalk.yellow('cancelled (interrupted)')
+            : chalk.yellow(`finished (${result.outcome})`);
+      console.log(chalk.gray(`\n[Guppy] ${status}`));
+      const savedPart =
+        result.tokensSaved !== undefined
+          ? `  Saved: ≈${compactTokens(result.tokensSaved)}`
+          : '';
+      console.log(
+        chalk.gray(
+          `  Duration: ${result.durationMs}ms  Tokens: ${result.tokens ?? 0}  Tool calls: ${result.toolCalls ?? 0}  ` +
+            `Tests: ${result.passes ?? 0} passed / ${result.failures ?? 0} failed${savedPart}`,
+        ),
+      );
+    } else {
+      console.error(chalk.red(`\n[Guppy] Turn failed: ${result.error}`));
+    }
+  };
+
   const handleTurn = async (userInput: string): Promise<void> => {
-    const task: Task = {
+    console.log(chalk.blue(`\n[Guppy] Working on: ${userInput}`));
+    await runTask({
       id: ulid(),
       description: userInput,
       repoPath,
@@ -464,23 +832,68 @@ export async function runChat(options: ChatOptions): Promise<void> {
       verificationLevel,
       createdAt: now(),
       metadata: { chat: true },
-    };
-    console.log(chalk.blue(`\n[Guppy] Working on: ${userInput}`));
-    const result = await runChatTurn(engine.sessionManager, task);
+    });
+  };
+
+  const handlePlanTurn = async (userInput: string): Promise<void> => {
+    console.log(chalk.blue(`\n[Guppy] Planning (read-only): ${userInput}`));
+    const result = await runPlanTurn(
+      engine.sessionManager,
+      {
+        id: ulid(),
+        description: userInput,
+        repoPath,
+        tags: [],
+        verificationLevel,
+        createdAt: now(),
+        metadata: { chat: true, mode: 'plan' },
+      },
+      engine.savings,
+    );
     if (result.ok) {
-      const status =
-        result.outcome === 'success'
-          ? chalk.green(`completed (${result.outcome})`)
-          : chalk.yellow(`finished (${result.outcome})`);
-      console.log(`\n[Guppy] Task ${status}`);
+      pendingPlan = result.plan ?? null;
+      modelPlan = result.plan ?? null;
+      planTaskId = result.taskId ?? null;
+      if (result.plan) {
+        console.log(`\n${result.plan}`);
+        console.log(chalk.cyan('Plan ready — /build to execute · /edit to revise'));
+      } else {
+        console.log(
+          chalk.yellow('\n[Guppy] The model produced no plan — describe the task again, or /build to leave plan mode.'),
+        );
+      }
+      const savedPart =
+        result.tokensSaved !== undefined ? `  Saved: ≈${compactTokens(result.tokensSaved)}` : '';
       console.log(
         chalk.gray(
-          `  Duration: ${result.durationMs}ms  Tokens: ${result.tokens ?? 0}  Tool calls: ${result.toolCalls ?? 0}  ` +
-            `Tests: ${result.passes ?? 0} passed / ${result.failures ?? 0} failed`,
+          `  Duration: ${result.durationMs}ms  Tokens: ${result.tokens ?? 0}  Tool calls: ${result.toolCalls ?? 0}${savedPart}`,
         ),
       );
     } else {
-      console.error(chalk.red(`\n[Guppy] Turn failed: ${result.error}`));
+      console.error(chalk.red(`\n[Guppy] Plan failed: ${result.error}`));
+    }
+  };
+
+  /** Approve the pending plan and run it through the full gated loop. */
+  const approveAndBuild = async (): Promise<void> => {
+    const plan = pendingPlan;
+    pendingPlan = null;
+    modelPlan = null;
+    planTaskId = null;
+    editingPlan = false;
+    const task: Task = {
+      id: ulid(),
+      description: plan ?? '',
+      repoPath,
+      tags: [],
+      verificationLevel,
+      createdAt: now(),
+      metadata: { chat: true, approvedPlan: true },
+    };
+    if (plan) {
+      emitPlanApproved(engine.eventStore, task.id, ulid(), plan);
+      console.log(chalk.blue('\n[Guppy] Executing the approved plan…'));
+      await runTask(task);
     }
   };
 
@@ -491,7 +904,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
       `  Runtime: ${options.runtime}  Model: ${options.model}  Verification: ${verificationLevel}  Max turns: ${options.maxTurns}`,
     ),
   );
-  console.log(chalk.gray('  Commands: /help  /models  /provider  /model  /verify <0-5>  /exit'));
+  console.log(chalk.gray('  Commands: /help  /models  /provider  /model  /verify <0-5>  /plan  /build  /exit'));
   rl.prompt();
 
   rl.on('line', (line) => {
@@ -499,6 +912,11 @@ export async function runChat(options: ChatOptions): Promise<void> {
     if (!userInput) {
       prompt();
       return;
+    }
+    // While revising, any command other than /edit cancels the capture and
+    // runs normally; a bare line is captured as the revised plan below.
+    if (editingPlan && userInput.startsWith('/') && userInput !== '/edit' && !userInput.startsWith('/edit ')) {
+      editingPlan = false;
     }
     if (userInput === '/exit' || userInput === '/quit') {
       void shutdown();
@@ -649,6 +1067,84 @@ export async function runChat(options: ChatOptions): Promise<void> {
       })();
       return;
     }
+    if (userInput === '/plan') {
+      if (mode === 'plan') {
+        console.log(chalk.yellow('  Already in plan mode.'));
+      } else {
+        mode = 'plan';
+        pendingPlan = null;
+        modelPlan = null;
+        planTaskId = null;
+        editingPlan = false;
+        console.log(
+          chalk.gray('  Plan mode — messages are read-only planning turns (no edits). /build to approve and run.'),
+        );
+      }
+      prompt();
+      return;
+    }
+    if (userInput === '/build') {
+      if (mode === 'plan' && !pendingPlan) {
+        mode = 'build';
+        modelPlan = null;
+        planTaskId = null;
+        editingPlan = false;
+        console.log(chalk.gray('  Build mode — no plan pending. Describe a task to run it.'));
+        prompt();
+        return;
+      }
+      if (mode === 'build') {
+        console.log(chalk.yellow('  Already in build mode.'));
+        prompt();
+        return;
+      }
+      if (busy) {
+        console.log(chalk.yellow('  Still working — wait for the current turn to finish.'));
+        prompt();
+        return;
+      }
+      mode = 'build';
+      busy = true;
+      void (async () => {
+        await approveAndBuild();
+        busy = false;
+        if (shuttingDown) {
+          await closeResources();
+        } else {
+          prompt();
+        }
+      })();
+      return;
+    }
+    if (userInput === '/edit' || userInput.startsWith('/edit ')) {
+      if (busy) {
+        console.log(chalk.yellow('  Still working — wait for the current turn to finish.'));
+        prompt();
+        return;
+      }
+      if (!pendingPlan) {
+        console.log(chalk.yellow('  No plan to revise — /plan <task> to produce one first.'));
+        prompt();
+        return;
+      }
+      const inline = userInput.slice('/edit '.length).trim();
+      if (inline) {
+        if (planTaskId !== null && modelPlan !== null && inline !== modelPlan) {
+          emitPlanRevised(engine.eventStore, planTaskId, modelPlan, inline);
+        }
+        pendingPlan = inline;
+        editingPlan = false;
+        console.log(`\n${pendingPlan}`);
+        console.log(chalk.cyan('Plan ready — /build to execute · /edit to revise'));
+      } else {
+        editingPlan = true;
+        console.log(
+          chalk.gray('  Revise the plan — type your revised plan on the next line, then /build to run it.'),
+        );
+      }
+      prompt();
+      return;
+    }
     if (userInput.startsWith('/')) {
       console.log(chalk.yellow(`  Unknown command: ${userInput} (try /help)`));
       prompt();
@@ -659,9 +1155,25 @@ export async function runChat(options: ChatOptions): Promise<void> {
       prompt();
       return;
     }
+    if (editingPlan) {
+      // Capture the line verbatim as the revised plan (no model call).
+      editingPlan = false;
+      if (planTaskId !== null && modelPlan !== null && userInput !== modelPlan) {
+        emitPlanRevised(engine.eventStore, planTaskId, modelPlan, userInput);
+      }
+      pendingPlan = userInput;
+      console.log(`\n${pendingPlan}`);
+      console.log(chalk.cyan('Plan ready — /build to execute · /edit to revise'));
+      prompt();
+      return;
+    }
     busy = true;
     void (async () => {
-      await handleTurn(userInput);
+      if (mode === 'plan') {
+        await handlePlanTurn(userInput);
+      } else {
+        await handleTurn(userInput);
+      }
       busy = false;
       if (shuttingDown) {
         // Exit requested mid-turn (EOF or /exit) — finish the shutdown now.

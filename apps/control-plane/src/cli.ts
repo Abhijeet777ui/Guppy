@@ -4,16 +4,27 @@
 
 import { Command } from 'commander';
 import chalk from 'chalk';
+import { existsSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { ulid, now } from '@guppy/contracts';
 import type { Task, VerificationLevel } from '@guppy/contracts';
 import { createEventStore } from '@guppy/event-store';
 import { createWorkspaceManager } from '@guppy/workspace';
-import { ContextEngine, loadSkills, saveSkill } from '@guppy/context-engine';
+import { ContextEngine, loadSkills, parseSkillMarkdown, saveSkill, slug } from '@guppy/context-engine';
 import { createVerificationEngine } from '@guppy/verification-engine';
+import {
+  BUILTIN_REGISTRY,
+  defaultSkillsDir,
+  installSkill,
+  listInstalledSkills,
+  loadRegistry,
+  removeSkill,
+} from '@guppy/skills';
 import {
   THINKING_LEVELS,
   defaultConfigPath,
+  hasAnyApiKey,
+  isNoKeyProvider,
   listModels,
   listProviders,
   loadUserConfig,
@@ -25,6 +36,7 @@ import {
 import type { ThinkingLevel } from '@guppy/models';
 import {
   ALL_CONFIGS,
+  analyzeContextCaptures,
   attachContextHealth,
   effectiveRetrySettings,
   loadDataset,
@@ -34,11 +46,21 @@ import {
   type BenchConfigKind,
   type DatasetSource,
 } from '@guppy/bench-runner';
+import {
+  addMcpServer,
+  connectMcpServers,
+  defaultMcpConfigPath,
+  loadMcpConfig,
+  removeMcpServer,
+  type McpBridge,
+} from '@guppy/mcp';
 import { createSessionManager } from './session-manager.js';
 import { latestCheckpoint } from './checkpoint.js';
 import { attachLiveStream } from './live-stream.js';
 import { buildAgentRuntime, runChat, type RuntimeOptions } from './chat.js';
 import { runTui } from './tui.js';
+import { runLaunchPicker, runSetupWizard } from './pickers.js';
+import { ProcessTerminal } from '@earendil-works/pi-tui';
 import { join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -137,6 +159,33 @@ function createPrompter() {
   };
 }
 
+/**
+ * Redirect a first run with no usable API key to onboarding instead of a dead
+ * `claude-3-5-sonnet` fallback (Track C). An explicit --model/--provider/
+ * --api-key/--base-url bypasses the gate — the user is choosing an endpoint,
+ * so its auth is their call. A configured default pointing at a keyless local
+ * provider (ollama, etc.) also bypasses it.
+ */
+function ensureKeyConfigured(options: CommanderRuntimeOptions): void {
+  if (
+    options.model !== undefined ||
+    options.provider !== undefined ||
+    options.apiKey !== undefined ||
+    options.baseUrl !== undefined
+  ) {
+    return;
+  }
+  const config = loadUserConfig();
+  if (hasAnyApiKey(config)) return;
+  if (isNoKeyProvider(resolveRuntimeOptions({}, config).provider)) return;
+  console.error(chalk.yellow('[Guppy] No API key configured.'));
+  console.error(
+    chalk.gray('  Run `guppy setup` to add a provider key, or pass --provider/--model/--api-key.'),
+  );
+  console.error(chalk.gray('  Local models need no key: `guppy chat --provider ollama`.'));
+  process.exit(1);
+}
+
 /** Commander option shape shared by `run` and `chat` (runtime-affecting flags). */
 interface CommanderRuntimeOptions {
   runtime: string;
@@ -198,6 +247,38 @@ function toRuntimeOptions(options: CommanderRuntimeOptions): RuntimeOptions {
   };
 }
 
+/**
+ * Connect the registered MCP servers for a run/chat session. Returns null
+ * when disabled (`--no-mcp`) or nothing is registered. A broken server is
+ * logged and skipped, never fatal. The caller owns the returned bridge and
+ * must close it (MCP servers are child processes and would outlive the CLI).
+ */
+async function connectMcpForCli(options: { noMcp?: boolean; cwd: string }): Promise<McpBridge | null> {
+  if (options.noMcp) return null;
+  const config = loadMcpConfig();
+  const names = Object.keys(config.mcpServers);
+  if (names.length === 0) return null;
+  const bridge = await connectMcpServers(config, {
+    // Sandbox layer 2: servers start inside the repo, not wherever the CLI
+    // was launched, so relative file operations stay in the workspace.
+    cwd: options.cwd,
+    log: (message) => console.log(chalk.gray(message)),
+  });
+  if (bridge.connected > 0) {
+    console.log(
+      chalk.gray(
+        `[Guppy] MCP: ${bridge.connected} server(s) connected · ${bridge.tools.length} external tool(s) available.`,
+      ),
+    );
+  }
+  if (bridge.failed > 0) {
+    console.log(
+      chalk.yellow(`[Guppy] MCP: ${bridge.failed} server(s) failed to connect (see logs above) — guppy mcp list to inspect.`),
+    );
+  }
+  return bridge;
+}
+
 program
   .command('run [task]')
   .description('Run a coding task in a repository')
@@ -226,9 +307,18 @@ program
   .option('--force', 'With --no-commit, overwrite uncommitted repo changes (dangerous)')
   .option('-q, --quiet', 'Suppress live event streaming (summary only)')
   .option('--resume', 'Resume the most recent interrupted run in this repo')
+  .option('--no-mcp', 'Do not load registered MCP servers')
   .action(async (taskDescription, options) => {
+    ensureKeyConfigured(options);
     const repoPath = resolve(options.repo);
     const runtimeOptions = toRuntimeOptions(options);
+    // Load registered MCP servers so their tools join the loop (opt-out with
+    // --no-mcp). The bridge must be closed before the process exits.
+    const mcpBridge = await connectMcpForCli({ noMcp: options.noMcp, cwd: repoPath });
+    if (mcpBridge) runtimeOptions.mcpBridge = mcpBridge;
+    // Capture the exact model payloads so the run summary can report ContextOps
+    // token savings (best-effort; omitted when scoring is unavailable).
+    runtimeOptions.contextCaptureDir = resolve(repoPath, '.guppy', 'context');
     const resumeCheckpoint = options.resume ? latestCheckpoint(repoPath) : null;
 
     if (options.resume && !resumeCheckpoint) {
@@ -329,6 +419,12 @@ program
 
     detachLiveStream();
 
+    // ContextOps token savings (best-effort): score the captures this run
+    // produced and surface the estimate only when scoring actually worked.
+    const contextHealth = await analyzeContextCaptures(resolve(repoPath, '.guppy', 'context'));
+    const savedTokens =
+      contextHealth && !contextHealth.skipped ? contextHealth.tokensSaved : undefined;
+
     if (result.ok) {
       const trajectory = result.value;
       console.log(chalk.green('\n[Guppy] Task completed!'));
@@ -338,10 +434,15 @@ program
       console.log(chalk.gray(`  Tool calls: ${trajectory.metrics.toolCalls}`));
       console.log(chalk.gray(`  Tests passed: ${trajectory.metrics.passes}`));
       console.log(chalk.gray(`  Tests failed: ${trajectory.metrics.failures}`));
+      if (savedTokens !== undefined) {
+        console.log(chalk.gray(`  Context savings (ContextOps, est.): ≈${savedTokens}`));
+      }
     } else {
       console.error(chalk.red('\n[Guppy] Task failed:'), result.error.message);
+      await mcpBridge?.close();
       process.exit(1);
     }
+    await mcpBridge?.close();
   });
 
 program
@@ -371,9 +472,60 @@ program
   .option('--no-commit', 'Merge changes back without creating git commits (files overlaid onto the repo)')
   .option('--force', 'With --no-commit, overwrite uncommitted repo changes (dangerous)')
   .option('-q, --quiet', 'Suppress live event streaming (summary only)')
+  .option('--no-mcp', 'Do not load registered MCP servers')
   .option('--tui', 'Use the fullscreen terminal interface (default when stdin/stdout are TTYs)')
   .option('--no-tui', 'Use the line-based REPL instead of the fullscreen TUI')
   .action(async (options) => {
+    // Fullscreen TUI on an interactive terminal; the REPL everywhere else
+    // (piped stdin, scripts, CI). `--tui` / `--no-tui` force either way.
+    const useTui = options.tui ?? (process.stdin.isTTY === true && process.stdout.isTTY === true);
+
+    // M2 launch picker: on an interactive terminal with nothing explicitly
+    // chosen (no --model/--provider/--base-url/--api-key), guide the user
+    // through arrow-key pickers instead of falling back to a dead model id.
+    // No key at all → run the setup wizard inline. Key but no default model →
+    // pick provider + live model. Both persist the choice as the default so
+    // the next launch is frictionless.
+    if (useTui) {
+      const config = loadUserConfig();
+      const explicit =
+        options.model !== undefined ||
+        options.provider !== undefined ||
+        options.baseUrl !== undefined ||
+        options.apiKey !== undefined;
+      if (!explicit && !hasAnyApiKey(config) && !isNoKeyProvider(resolveRuntimeOptions({}, config).provider)) {
+        const picked = await runSetupWizard();
+        if (!picked) {
+          console.log(chalk.yellow('[Guppy] Setup cancelled — nothing saved.'));
+          process.exit(0);
+        }
+        const next = loadUserConfig();
+        next.providers[picked.provider] = {
+          ...(next.providers[picked.provider] ?? {}),
+          ...(picked.apiKey !== undefined ? { apiKey: picked.apiKey } : {}),
+          ...(picked.baseUrl !== undefined ? { baseUrl: picked.baseUrl } : {}),
+        };
+        next.default = { provider: picked.provider, model: picked.model };
+        saveUserConfig(next);
+        console.log(chalk.green(`\n[Guppy] Saved ${picked.provider} → default ${picked.provider}/${picked.model}`));
+      } else if (!explicit && !config.default) {
+        const picked = await runLaunchPicker(new ProcessTerminal(), config);
+        if (!picked) {
+          console.log(chalk.yellow('[Guppy] No model selected — exiting.'));
+          process.exit(0);
+        }
+        options.model = picked.model;
+        options.provider = picked.provider;
+        if (picked.baseUrl !== undefined) options.baseUrl = picked.baseUrl;
+        if (picked.apiKey !== undefined) options.apiKey = picked.apiKey;
+        // Remember the pick so the next launch skips straight into chat.
+        const next = loadUserConfig();
+        next.default = { provider: picked.provider, model: picked.model };
+        saveUserConfig(next);
+      }
+    }
+
+    ensureKeyConfigured(options);
     const probe = await createWorkspaceManager({
       dockerImage: 'guppy/executor:latest',
       useContainers: !options.local,
@@ -382,9 +534,15 @@ program
       console.error(chalk.red(`[Guppy] ${probe.reason}.`));
       process.exit(1);
     }
+    // Load registered MCP servers so their tools join the chat loop (opt-out
+    // with --no-mcp). The chat engine closes the bridge on shutdown. The
+    // servers start inside the repo (sandbox layer 2).
+    const repoPath = resolve(options.repo);
+    const mcpBridge = await connectMcpForCli({ noMcp: options.noMcp, cwd: repoPath });
     const chatOptions = {
-      repoPath: resolve(options.repo),
+      repoPath,
       ...toRuntimeOptions(options),
+      ...(mcpBridge ? { mcpBridge } : {}),
       verificationLevel: parseVerificationLevel(options.verification),
       quiet: options.quiet,
       local: options.local,
@@ -394,9 +552,6 @@ program
       ...(options.commit === false ? { noCommit: true } : {}),
       ...(options.force ? { force: true } : {}),
     };
-    // Fullscreen TUI on an interactive terminal; the REPL everywhere else
-    // (piped stdin, scripts, CI). `--tui` / `--no-tui` force either way.
-    const useTui = options.tui ?? (process.stdin.isTTY === true && process.stdout.isTTY === true);
     if (useTui) {
       await runTui(chatOptions);
     } else {
@@ -484,7 +639,7 @@ program
     }
   });
 
-const skillCmd = program.command('skill').description('Author and list repo skills');
+const skillCmd = program.command('skill').description('Author, install, list, and remove skills');
 skillCmd
   .command('add <name> <description>')
   .description('Author a repo skill (writes <repo>/.guppy/skills/<slug>.md)')
@@ -513,19 +668,101 @@ skillCmd
   });
 
 skillCmd
+  .command('install [source]')
+  .description('Install a skill: a registry name, an https:// URL to a .md skill file, or a local path')
+  .option('--registry <ref>', 'Registry manifest: https:// URL, file path, or inline JSON (default: the builtin registry)')
+  .option('--force', 'Overwrite an already-installed skill with the same name')
+  .option('--dir <path>', 'Install into this directory instead of the per-user skills dir')
+  .action(async (source: string | undefined, options: { registry?: string; force?: boolean; dir?: string }) => {
+    // No source -> show what the (effective) registry offers, with installed marks.
+    if (!source) {
+      const { registry } = await loadRegistry(options.registry);
+      const installed = new Set(
+        listInstalledSkills({ ...(options.dir ? { dir: resolve(options.dir) } : {}) }).map((i) =>
+          i.skill.name.toLowerCase(),
+        ),
+      );
+      const label = registry.name ?? 'registry';
+      console.log(chalk.blue(`[Guppy] Skills available in ${label}:`));
+      for (const entry of registry.skills) {
+        const mark = installed.has(entry.name.toLowerCase()) ? chalk.green('installed') : chalk.gray('available');
+        const src = entry.source === 'builtin' ? 'builtin' : entry.source;
+        console.log(chalk.gray(`  - ${entry.name.padEnd(18)} ${mark}`));
+        console.log(chalk.gray(`      ${entry.description}`));
+        console.log(chalk.gray(`      ${src}`));
+      }
+      console.log(chalk.gray('  Install one with: guppy skill install <name>'));
+      return;
+    }
+    try {
+      const result = await installSkill(source, {
+        ...(options.registry ? { registry: options.registry } : {}),
+        ...(options.force ? { force: true } : {}),
+        ...(options.dir ? { dir: resolve(options.dir) } : {}),
+      });
+      console.log(chalk.green(`[Guppy] Skill "${result.skill.name}" installed (${result.skill.id})`));
+      console.log(chalk.gray(`  ${result.file}`));
+      console.log(chalk.gray(`  source: ${result.source}`));
+      console.log(
+        chalk.gray('  It is loaded into the context of every run/chat in every repo — `guppy skill list` to inspect, `guppy skill remove <name>` to uninstall.'),
+      );
+    } catch (e) {
+      console.error(chalk.red('[Guppy] Could not install skill:'), e instanceof Error ? e.message : String(e));
+      process.exit(1);
+    }
+  });
+
+skillCmd
+  .command('remove <name>')
+  .description('Remove an installed skill (per-user first, then the repo skills dir)')
+  .option('-r, --repo <path>', 'Repository path', process.cwd())
+  .action((name, options) => {
+    const userDir = defaultSkillsDir();
+    const userFile = join(userDir, `${slug(name)}.md`);
+    if (existsSync(userFile)) {
+      removeSkill(name, { dir: userDir });
+      console.log(chalk.green(`[Guppy] Skill "${name}" removed from ${userFile}`));
+      return;
+    }
+    const repoPath = resolve(options.repo);
+    const repoFile = join(repoPath, '.guppy', 'skills', `${slug(name)}.md`);
+    if (existsSync(repoFile)) {
+      removeSkill(name, { dir: resolve(repoPath, '.guppy', 'skills') });
+      console.log(chalk.green(`[Guppy] Skill "${name}" removed from ${repoFile}`));
+      return;
+    }
+    console.log(
+      chalk.yellow(`[Guppy] Skill "${name}" is not installed (checked ${userFile} and ${repoFile}).`),
+    );
+  });
+
+skillCmd
   .command('list')
-  .description('List skills loaded from <repo>/.guppy/skills')
+  .description('List installed (per-user) and repo skills')
   .option('-r, --repo <path>', 'Repository path', process.cwd())
   .action((options) => {
     const repoPath = resolve(options.repo);
-    const skills = loadSkills(resolve(repoPath, '.guppy', 'skills'));
-    if (skills.length === 0) {
-      console.log(chalk.yellow('[Guppy] No skills found. Author one with: guppy skill add <name> <description>'));
+    const repoSkillsDir = resolve(repoPath, '.guppy', 'skills');
+    const userSkillsDir = defaultSkillsDir();
+    const installed = listInstalledSkills({ dir: userSkillsDir });
+    const repoSkills = loadSkills(repoSkillsDir);
+    const total = installed.length + repoSkills.length;
+    if (total === 0) {
+      console.log(
+        chalk.yellow('[Guppy] No skills found. Author one with: guppy skill add <name> <description> · install one with: guppy skill install'),
+      );
       return;
     }
-    console.log(chalk.blue(`[Guppy] ${skills.length} skill(s) in ${resolve(repoPath, '.guppy', 'skills')}:`));
-    for (const s of skills) {
-      console.log(chalk.gray(`  - ${s.name}${s.tags.length > 0 ? ` [${s.tags.join(', ')}]` : ''}`));
+    console.log(chalk.blue(`[Guppy] ${total} skill(s): ${installed.length} installed (${userSkillsDir}), ${repoSkills.length} repo (${repoSkillsDir})`));
+    for (const i of installed) {
+      const tags = i.skill.tags.length > 0 ? ` [${i.skill.tags.join(', ')}]` : '';
+      console.log(chalk.gray(`  ${chalk.green('[user]')} ${i.skill.name}${tags}`));
+      console.log(chalk.gray(`      ${i.skill.description}`));
+      console.log(chalk.gray(`      source: ${i.source ?? 'local'}`));
+    }
+    for (const s of repoSkills) {
+      const tags = s.tags.length > 0 ? ` [${s.tags.join(', ')}]` : '';
+      console.log(chalk.gray(`  ${chalk.cyan('[repo]')} ${s.name}${tags}`));
       console.log(chalk.gray(`      ${s.description}`));
     }
   });
@@ -559,6 +796,7 @@ program
   .option('--max-attempts <n>', 'Max closed-loop attempts per task', '3')
   .option('--attempt-timeout <ms>', 'Per-attempt timeout in ms', '600000')
   .option('--model-timeout-ms <ms>', 'Per-request timeout in ms for the guppy-core config')
+  .option('--skills <dir>', 'Skills dir injected into every task for the guppy-core-skill config (default: the installed per-user skills dir)')
   .option('--dry-run', 'Materialize fixtures and gate them; never invoke an LLM', false)
   .action(async (options: Record<string, string | boolean>) => {
     const suite = String(options['suite']);
@@ -610,6 +848,9 @@ program
       maxAttempts: parseInt(String(options['maxAttempts']), 10) || 3,
       attemptTimeoutMs: parseInt(String(options['attemptTimeout']), 10) || 600_000,
       ...(modelTimeoutMs !== undefined ? { modelTimeoutMs } : {}),
+      ...(typeof options['skills'] === 'string' && options['skills'] !== ''
+        ? { skillsDir: resolve(String(options['skills'])) }
+        : {}),
       dryRun: options['dryRun'] === true,
     };
 
@@ -741,8 +982,34 @@ configCmd
 
 program
   .command('setup')
-  .description('Interactive provider setup: pick a provider, paste a key, save to ~/.guppy/config.json')
+  .description('Interactive provider setup: pick a provider, paste a key, pick a model (arrow keys)')
   .action(async () => {
+    // Interactive terminal → the M2 arrow-key wizard (provider → key → live
+    // model list from that provider's API, so nobody types model ids by
+    // heart). Piped/non-TTY stdin keeps the scriptable readline flow.
+    const interactive = process.stdin.isTTY === true && process.stdout.isTTY === true;
+    if (interactive) {
+      const picked = await runSetupWizard();
+      if (!picked) {
+        console.log(chalk.yellow('[Guppy] Setup cancelled — nothing saved.'));
+        return;
+      }
+      const config = loadUserConfig();
+      config.providers[picked.provider] = {
+        ...(config.providers[picked.provider] ?? {}),
+        ...(picked.apiKey !== undefined ? { apiKey: picked.apiKey } : {}),
+        ...(picked.baseUrl !== undefined ? { baseUrl: picked.baseUrl } : {}),
+      };
+      config.default = { provider: picked.provider, model: picked.model };
+      const path = saveUserConfig(config);
+      console.log(chalk.green(`\n[Guppy] Saved ${picked.provider} → ${path}`));
+      console.log(chalk.green(`  Default model: ${picked.provider}/${picked.model}`));
+      console.log(
+        chalk.gray('  Keys are stored in plaintext with 0600 permissions — rotate them if the file leaks.'),
+      );
+      return;
+    }
+
     const providers = listProviders().filter((p) => p.coreCompatibleCount > 0);
     console.log(chalk.blue('[Guppy] Provider setup'));
     console.log(chalk.gray('  Core-compatible providers (usable by the core runtime):'));
@@ -792,4 +1059,90 @@ program
     }
   });
 
-program.parse();
+const mcpCmd = program.command('mcp').description('Register and inspect MCP tool servers');
+
+mcpCmd
+  .command('add <name> <command>')
+  .description('Register an MCP server (spawned over stdio when the agent runs)')
+  .option('--args <args>', 'Comma-separated arguments to the server command')
+  .option('--env <key=value,...>', 'Comma-separated extra environment variables')
+  .option('--config <path>', 'Config file (default: ~/.guppy/mcp.json)')
+  .action((name, command, options) => {
+    const config = addMcpServer(
+      name,
+      {
+        command,
+        ...(options.args ? { args: options.args.split(',').map((a: string) => a.trim()).filter(Boolean) } : {}),
+        ...(options.env
+          ? {
+              env: Object.fromEntries(
+                options.env.split(',').map((kv: string) => {
+                  const eq = kv.indexOf('=');
+                  if (eq <= 0) throw new Error(`env must be key=value, got "${kv}"`);
+                  return [kv.slice(0, eq).trim(), kv.slice(eq + 1).trim()];
+                }),
+              ),
+            }
+          : {}),
+      },
+      options.config ? resolve(options.config) : undefined,
+    );
+    console.log(chalk.green(`[Guppy] MCP server "${name}" registered.`));
+    console.log(chalk.gray(`  ${defaultMcpConfigPath()}`));
+    console.log(
+      chalk.yellow(
+        '  MCP servers start inside the workspace with a scrubbed environment (no API keys or tokens) and are' +
+          ' force-killed with their whole process tree when the session ends. This is containment, not a jail:' +
+          ' a server still runs with your account permissions. Only add servers you trust.',
+      ),
+    );
+    console.log(chalk.gray(`  ${config.mcpServers[name] ? 'It will load automatically on the next run/chat (--no-mcp to skip).' : ''}`));
+  });
+
+mcpCmd
+  .command('list')
+  .description('List registered MCP servers')
+  .option('--config <path>', 'Config file (default: ~/.guppy/mcp.json)')
+  .action((options) => {
+    const path = options.config ? resolve(options.config) : defaultMcpConfigPath();
+    const config = loadMcpConfig(path);
+    const names = Object.keys(config.mcpServers);
+    if (names.length === 0) {
+      console.log(chalk.yellow(`[Guppy] No MCP servers registered (${path}). Add one with: guppy mcp add <name> <command>`));
+      return;
+    }
+    console.log(chalk.blue(`[Guppy] ${names.length} MCP server(s) in ${path}:`));
+    for (const name of names) {
+      const server = config.mcpServers[name];
+      if (!server) continue;
+      const cmdLine = [server.command, ...(server.args ?? [])].join(' ');
+      console.log(chalk.gray(`  - ${name}`));
+      console.log(chalk.gray(`      ${cmdLine}`));
+      if (server.env && Object.keys(server.env).length > 0) {
+        console.log(chalk.gray(`      env: ${Object.keys(server.env).join(', ')}`));
+      }
+    }
+  });
+
+mcpCmd
+  .command('remove <name>')
+  .description('Unregister an MCP server')
+  .option('--config <path>', 'Config file (default: ~/.guppy/mcp.json)')
+  .action((name, options) => {
+    const path = options.config ? resolve(options.config) : undefined;
+    const config = loadMcpConfig(path);
+    if (!config.mcpServers[name]) {
+      console.log(chalk.yellow(`[Guppy] No MCP server named "${name}" is registered.`));
+      return;
+    }
+    removeMcpServer(name, path);
+    console.log(chalk.green(`[Guppy] MCP server "${name}" removed.`));
+  });
+
+// pnpm forwards `pnpm cli -- chat --local` by passing a literal `--` as the
+// first user argument; commander treats that as end-of-options and silently
+// drops every flag after it (`-r`, `--local`, …). Strip a leading `--` so the
+// pnpm form behaves exactly like the direct `node dist/cli.js` form.
+const userArgs = process.argv.slice(2);
+if (userArgs[0] === '--') userArgs.shift();
+program.parse(userArgs, { from: 'user' });

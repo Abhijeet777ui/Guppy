@@ -16,6 +16,7 @@ import chalk from 'chalk';
 import {
   CombinedAutocompleteProvider,
   Editor,
+  Markdown,
   ProcessTerminal,
   ScrollView,
   Text,
@@ -25,9 +26,16 @@ import {
   matchesKey,
   truncateToWidth,
 } from '@earendil-works/pi-tui';
-import type { Component, EditorTheme, SlashCommand } from '@earendil-works/pi-tui';
+import type {
+  Component,
+  EditorTheme,
+  MarkdownTheme,
+  SlashCommand,
+  Terminal,
+  TUI,
+} from '@earendil-works/pi-tui';
 import { now, ulid } from '@guppy/contracts';
-import type { Task, VerificationLevel } from '@guppy/contracts';
+import type { Task, ULID, VerificationLevel } from '@guppy/contracts';
 import {
   THINKING_LEVELS,
   defaultConfigPath,
@@ -40,10 +48,19 @@ import {
   selectModel,
 } from '@guppy/models';
 import type { ThinkingLevel } from '@guppy/models';
-import { createChatEngine, runChatTurn } from './chat.js';
+import { createChatEngine, emitPlanApproved, emitPlanRevised, runChatTurn, runPlanTurn } from './chat.js';
 import type { ChatOptions } from './chat.js';
 import { renderLiveEvent } from './live-stream.js';
-import { Transcript, compactTokens, renderStatusLine, selectListTheme } from './tui-logic.js';
+import {
+  Transcript,
+  compactTokens,
+  humanizeAction,
+  markdownTheme,
+  renderContextBar,
+  renderTurnFooter,
+  selectListTheme,
+  type ThemeMode,
+} from './tui-logic.js';
 
 /** Adapter: expose the pure `Transcript` buffer as a pi-tui `Component`. */
 class TranscriptView implements Component {
@@ -58,23 +75,124 @@ class TranscriptView implements Component {
 }
 
 /**
+ * The scrollable chat area: the transcript lines (You messages, meta, footer)
+ * plus the latest Guppy reply rendered as markdown (headings, code, lists,
+ * tables) via pi-tui's Markdown component. One reply at a time — the previous
+ * reply's prose stays in the transcript as plain lines, so the conversation
+ * history stays readable while the newest answer gets full markdown treatment.
+ */
+class ChatView implements Component {
+  private markdown: Markdown;
+  private replyText = '';
+
+  constructor(
+    private readonly transcript: Transcript,
+    theme: MarkdownTheme,
+  ) {
+    this.markdown = new Markdown('', 0, 0, theme);
+  }
+
+  /** Set (or clear, with '') the current assistant reply. */
+  setReply(text: string): void {
+    this.replyText = text || '';
+    this.markdown.setText(this.replyText);
+  }
+
+  /** Swap the markdown palette (the /theme command) without losing the reply. */
+  setTheme(theme: MarkdownTheme): void {
+    this.markdown = new Markdown(this.replyText, 0, 0, theme);
+  }
+
+  render(width: number): string[] {
+    const w = Math.max(1, width);
+    const lines = this.transcript.lines.map((line) => truncateToWidth(line, w));
+    if (this.replyText) {
+      lines.push('');
+      lines.push(...this.markdown.render(w));
+    }
+    return lines;
+  }
+
+  invalidate(): void {
+    this.markdown.invalidate();
+  }
+}
+
+/**
+ * The inline activity line (UX-SPEC §4/§6): a spinner + one humanized action
+ * while busy, zero rows when idle. `set` starts the animation; `clear` stops
+ * it (must also run on shutdown so a dangling timer can't keep the process
+ * alive).
+ */
+class ActivityLine implements Component {
+  private static readonly FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+  private frame = 0;
+  private timer: ReturnType<typeof setInterval> | null = null;
+  private text = '';
+
+  constructor(private readonly tui: TUI) {}
+
+  set(text: string): void {
+    this.text = text;
+    if (this.timer) return;
+    this.frame = 0;
+    this.tick();
+    this.timer = setInterval(() => this.tick(), 80);
+  }
+
+  clear(): void {
+    this.text = '';
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
+    this.frame = 0;
+    this.tui.requestRender();
+  }
+
+  private tick(): void {
+    this.frame = (this.frame + 1) % ActivityLine.FRAMES.length;
+    this.tui.requestRender();
+  }
+
+  render(width: number): string[] {
+    if (!this.text) return [];
+    return [`${chalk.cyan(ActivityLine.FRAMES[this.frame])} ${this.text}`];
+  }
+
+  invalidate(): void {}
+}
+
+/**
  * Run the fullscreen TUI. Resolves once the user exits and the runtime/store
  * are shut down. Only call this on a real TTY (the CLI guards that).
  */
-export function runTui(options: ChatOptions): Promise<void> {
+export function runTui(options: ChatOptions, terminal: Terminal = new ProcessTerminal()): Promise<void> {
   return new Promise<void>((resolve) => {
     const engine = createChatEngine(options);
-    const terminal = new ProcessTerminal();
     const tui = new TuiAltScreen(terminal);
 
     const transcript = new Transcript();
-    const status = new Text('', 0, 0);
+
+    // Auto-detect the terminal color scheme (best-effort; dark on unknown).
+    // A /theme command later swaps this live.
+    let themeMode: ThemeMode = 'dark';
+    const applyTheme = (mode: ThemeMode): void => {
+      themeMode = mode;
+      chatView.setTheme(markdownTheme(mode));
+      contextBar.setText(renderContextBar(contextBarState(), themeMode));
+      tui.requestRender();
+    };
+    const chatView = new ChatView(transcript, markdownTheme(themeMode));
+    const contextBar = new Text('', 0, 0);
+    const hint = new Text('', 0, 0);
+    const activity = new ActivityLine(tui);
 
     // pi-tui's Editor is the multi-line chat bar (with history + autocomplete)
     // that prime's `pi` uses. The slash-command provider powers the "/" menu.
     const editorTheme: EditorTheme = {
       borderColor: (text: string) => chalk.dim(text),
-      selectList: selectListTheme(),
+      selectList: selectListTheme(themeMode),
     };
     const editor = new Editor(tui, editorTheme);
 
@@ -143,7 +261,16 @@ export function runTui(options: ChatOptions): Promise<void> {
         getArgumentCompletions: () => ['0', '1', '2', '3', '4', '5'].map((v) => ({ value: v, label: v })),
       },
       { name: 'verbose', description: 'toggle raw event logging' },
+      {
+        name: 'theme',
+        description: 'set the color scheme (dark | light)',
+        argumentHint: 'mode',
+        getArgumentCompletions: () => ['dark', 'light'].map((v) => ({ value: v, label: v })),
+      },
       { name: 'setup', description: 'store a provider API key', argumentHint: 'provider key' },
+      { name: 'plan', description: 'plan a task read-only before executing' },
+      { name: 'build', description: 'approve and run the last plan' },
+      { name: 'edit', description: 'revise the pending plan by hand' },
       { name: 'exit', description: 'leave the chat' },
       { name: 'quit', description: 'leave the chat' },
     ];
@@ -152,8 +279,9 @@ export function runTui(options: ChatOptions): Promise<void> {
     if (isViewportTUI(tui)) {
       tui.setLayoutRoot(
         new VStack([
+          { component: contextBar, basis: 'auto', shrink: 1, minSize: 1 },
           {
-            component: new ScrollView(new TranscriptView(transcript), {
+            component: new ScrollView(chatView, {
               follow: 'end',
               primary: true,
               overscroll: 'chain',
@@ -162,11 +290,38 @@ export function runTui(options: ChatOptions): Promise<void> {
             grow: 1,
             minSize: 1,
           },
-          { component: status, basis: 'auto', shrink: 1, minSize: 1 },
+          { component: activity, basis: 'auto', shrink: 1, minSize: 0 },
           { component: editor, basis: 'auto', shrink: 1, minSize: 1 },
+          { component: hint, basis: 'auto', shrink: 1, minSize: 1 },
         ]),
       );
     }
+    // Plan/build mode (UX-SPEC S6, Slice 4). /plan makes every message a
+    // read-only planning turn (the plan is rendered with a plan-gate footer);
+    // /build approves the last plan and runs it through the full gated loop.
+    let mode: 'plan' | 'build' = 'build';
+    // The plan awaiting approval (rendered + stored after a planning turn).
+    let pendingPlan: string | null = null;
+    // The model-produced plan (the last PlanProduced), kept separate from
+    // pendingPlan so a revision's diff is always against the model, not a
+    // prior human edit.
+    let modelPlan: string | null = null;
+    // The plan task id, so PlanRevised lands in the same task trace as the
+    // model's PlanProduced.
+    let planTaskId: ULID | null = null;
+    // True while the user is revising the plan by hand (the next submitted
+    // message is captured verbatim as the revised plan, no model call).
+    let editingPlan = false;
+    const refreshHint = (): void => {
+      if (editingPlan) {
+        hint.setText(chalk.dim('revising plan — Enter to save · Ctrl+C to cancel'));
+      } else if (mode === 'plan') {
+        hint.setText(chalk.dim('planning only — no edits · /build to execute'));
+      } else {
+        hint.setText(chalk.dim('Enter send · Shift+Enter newline · / for commands'));
+      }
+    };
+    refreshHint();
     tui.setFocus(editor);
 
     let busy = false;
@@ -175,17 +330,34 @@ export function runTui(options: ChatOptions): Promise<void> {
     let verbose = false;
     let activeProvider = options.provider;
     let verificationLevel = options.verificationLevel;
+    // Aborts the in-flight turn when the user presses Ctrl+C mid-turn (D2:
+    // interrupt the whole turn and land a clean "cancelled" state). Created
+    // per turn, so one Ctrl+C cancels the current turn and a second (idle)
+    // Ctrl+C exits.
+    let turnAbort: AbortController | null = null;
+    // Session totals for the exit-screen dump (UX-SPEC §11): accumulated
+    // across turns so the goodbye line summarizes the whole chat session.
+    let sessionTurns = 0;
+    let sessionTokens = 0;
+    let sessionToolCalls = 0;
+    let sessionPasses = 0;
+    let sessionFailures = 0;
+    let sessionSaved = 0;
 
-    const refreshStatus = (): void => {
-      status.setText(
-        renderStatusLine({
-          model: options.model,
-          ...(options.provider ? { provider: options.provider } : {}),
-          ...(options.thinkingLevel ? { thinkingLevel: options.thinkingLevel } : {}),
-          verificationLevel,
-          busy,
-        }),
-      );
+    const repoShort = engine.repoPath.split(/[\\/]/).filter(Boolean).pop() ?? engine.repoPath;
+    const contextBarState = () => ({
+      repo: repoShort,
+      model: options.model,
+      ...(options.provider ? { provider: options.provider } : {}),
+      ...(options.thinkingLevel ? { thinkingLevel: options.thinkingLevel } : {}),
+      verificationLevel,
+      mode,
+      // The cumulative ContextOps savings figure appears only once the
+      // tracker has successfully scored a capture (best-effort).
+      ...(engine.savings.isAvailable ? { savedTotal: engine.savings.cumulative } : {}),
+    });
+    const refreshContextBar = (): void => {
+      contextBar.setText(renderContextBar(contextBarState(), themeMode));
     };
 
     // The engine (SessionManager, verification engine, core runtime) reports
@@ -232,8 +404,14 @@ export function runTui(options: ChatOptions): Promise<void> {
     // -----------------------------------------------------------------------
 
     const detachLiveStream = engine.eventStore.subscribe((event) => {
-      // The transcript stays clean by default (user message → result); the raw
-      // event stream only appears with /verbose, for debugging a run.
+      // While a turn is in flight, the inline activity line shows one calm,
+      // humanized action per event ("Running npm test…", "Searching "…"").
+      // The transcript stays clean by default; the raw event stream only
+      // appears with /verbose, for debugging a run.
+      if (busy) {
+        const action = humanizeAction(event);
+        if (action) activity.set(action);
+      }
       if (!verbose) return;
       try {
         const line = renderLiveEvent(event);
@@ -250,9 +428,20 @@ export function runTui(options: ChatOptions): Promise<void> {
       if (finished) return;
       finished = true;
       detachLiveStream();
+      activity.clear();
       tui.stop();
       await engine.shutdown();
       restoreConsole();
+      // Exit-screen dump (UX-SPEC §11): one dim summary line of the session
+      // so the goodbye is a record, not a blank terminal. Tokens only, never
+      // money; savings omitted when ContextOps never scored.
+      if (sessionTurns > 0) {
+        let dump = `[Guppy] Session: ${sessionTurns} turn${sessionTurns === 1 ? '' : 's'} · ` +
+          `${compactTokens(sessionTokens)} tokens · ${sessionToolCalls} tool calls · ` +
+          `${sessionPasses}/${sessionFailures} tests`;
+        if (sessionSaved > 0) dump += ` · saved ≈${compactTokens(sessionSaved)}`;
+        console.log(chalk.gray(dump));
+      }
       console.log(chalk.gray('[Guppy] Bye.'));
       resolve();
     };
@@ -260,23 +449,39 @@ export function runTui(options: ChatOptions): Promise<void> {
     const requestShutdown = async (): Promise<void> => {
       if (shuttingDown) return;
       shuttingDown = true;
-      // A turn may be mid-flight (Ctrl+C or /exit while the agent works):
-      // defer the teardown until the turn lands rather than racing it — but
-      // say so immediately, otherwise it looks like Ctrl+C was ignored.
+      // A turn may be mid-flight (/exit while the agent works): interrupt it
+      // immediately, then tear down once the cancelled turn lands.
       if (busy) {
-        status.setText(chalk.yellow('[Guppy] shutting down — finishing the current turn…'));
-        transcript.append(chalk.yellow('[Guppy] Shutting down after the current turn finishes…'));
+        turnAbort?.abort();
+        activity.set(chalk.yellow('[Guppy] shutting down — interrupting the current turn…'));
+        transcript.append(chalk.yellow('[Guppy] Shutting down — interrupting the current turn…'));
         tui.requestRender();
         return;
       }
       await finishShutdown();
     };
 
-    // Ctrl+C quits the chat — unless the editor's autocomplete dropdown is
-    // open, in which case it should just dismiss the dropdown.
+    // Ctrl+C: interrupt an in-flight turn (whole-turn abort, lands "cancelled")…
+    // or quit the chat when idle. An open autocomplete dropdown just dismisses.
     tui.addInputListener((data) => {
       if (matchesKey(data, 'ctrl+c')) {
         if (editor.isShowingAutocomplete()) return undefined;
+        // Ctrl+C while revising the plan cancels the revision (keeps the
+        // pending plan) instead of exiting the chat.
+        if (editingPlan) {
+          editingPlan = false;
+          refreshHint();
+          transcript.append(chalk.yellow('[Guppy] Plan revision cancelled.'));
+          tui.requestRender();
+          return { consume: true };
+        }
+        if (busy && turnAbort && !turnAbort.signal.aborted) {
+          turnAbort.abort();
+          activity.set(chalk.yellow('Cancelling turn…'));
+          transcript.append(chalk.yellow('[Guppy] Interrupting the turn — landing as cancelled…'));
+          tui.requestRender();
+          return { consume: true };
+        }
         void requestShutdown();
         return { consume: true };
       }
@@ -304,6 +509,9 @@ export function runTui(options: ChatOptions): Promise<void> {
       chalk.gray('  /thinking [level]  show or set reasoning level (off|minimal|low|medium|high|xhigh|max)'),
       chalk.gray('  /verify <level>    set the verification level (0-5)'),
       chalk.gray('  /verbose           toggle raw event/engine logging on or off'),
+      chalk.gray('  /plan              plan a task read-only (no edits) before executing'),
+      chalk.gray('  /build             approve and run the last plan, or return to build mode'),
+      chalk.gray('  /edit [text]       revise the pending plan by hand, then /build to run it'),
       chalk.gray('  /exit, /quit, Ctrl+C   leave the chat'),
       chalk.gray('  anything else      run it as a task through the gated agent loop'),
     ];
@@ -360,7 +568,7 @@ export function runTui(options: ChatOptions): Promise<void> {
         return;
       }
       busy = true;
-      refreshStatus();
+      refreshContextBar();
       try {
         await engine.rebuild(() => {
           options.model = next.model;
@@ -382,8 +590,8 @@ export function runTui(options: ChatOptions): Promise<void> {
       } catch (e) {
         transcript.append(chalk.red(`Could not switch model: ${e instanceof Error ? e.message : String(e)}`));
       } finally {
-        busy = false;
-        refreshStatus();
+      busy = false;
+      refreshContextBar();
         tui.requestRender();
       }
     }
@@ -407,7 +615,7 @@ export function runTui(options: ChatOptions): Promise<void> {
       }
       const level = arg as ThinkingLevel;
       busy = true;
-      refreshStatus();
+      refreshContextBar();
       try {
         await engine.rebuild(() => {
           if (level === 'off') delete options.thinkingLevel;
@@ -417,8 +625,8 @@ export function runTui(options: ChatOptions): Promise<void> {
       } catch (e) {
         transcript.append(chalk.red(`Could not set thinking: ${e instanceof Error ? e.message : String(e)}`));
       } finally {
-        busy = false;
-        refreshStatus();
+      busy = false;
+      refreshContextBar();
         tui.requestRender();
       }
     }
@@ -428,7 +636,7 @@ export function runTui(options: ChatOptions): Promise<void> {
       if (Number.isInteger(level) && level >= 0 && level <= 5) {
         verificationLevel = level as VerificationLevel;
         transcript.append(chalk.gray(`Verification level set to ${level}.`));
-        refreshStatus();
+        refreshContextBar();
       } else {
         transcript.append(chalk.yellow('Usage: /verify <level 0-5> (level 6 formal verification is unsupported)'));
       }
@@ -502,41 +710,177 @@ export function runTui(options: ChatOptions): Promise<void> {
     // Turn execution
     // -----------------------------------------------------------------------
 
+    /** One build-mode task through the gated loop; the caller owns busy/abort. */
+    async function executeTaskTurn(task: Task, signal?: AbortSignal): Promise<void> {
+      const result = await runChatTurn(engine.sessionManager, task, engine.savings, signal);
+      activity.clear();
+      if (result.ok) {
+        sessionTurns++;
+        sessionTokens += result.tokens ?? 0;
+        sessionToolCalls += result.toolCalls ?? 0;
+        sessionPasses += result.passes ?? 0;
+        sessionFailures += result.failures ?? 0;
+        if (result.tokensSaved !== undefined) sessionSaved += result.tokensSaved;
+        chatView.setReply(result.outcome === 'cancelled' ? '' : (result.finalAnswer ?? ''));
+        const statusText =
+          result.outcome === 'success'
+            ? chalk.green(`completed (${result.outcome})`)
+            : result.outcome === 'cancelled'
+              ? chalk.yellow('cancelled (interrupted)')
+              : chalk.yellow(`finished (${result.outcome})`);
+        transcript.append(chalk.gray(`\n[Guppy] ${statusText}`));
+        transcript.append(
+          renderTurnFooter({
+            durationMs: result.durationMs,
+            ...(result.outcome !== undefined ? { outcome: result.outcome } : {}),
+            ...(result.tokens !== undefined ? { tokens: result.tokens } : {}),
+            ...(result.toolCalls !== undefined ? { toolCalls: result.toolCalls } : {}),
+            ...(result.passes !== undefined ? { passes: result.passes } : {}),
+            ...(result.failures !== undefined ? { failures: result.failures } : {}),
+            ...(result.tokensSaved !== undefined ? { tokensSaved: result.tokensSaved } : {}),
+          }),
+        );
+      } else {
+        chatView.setReply('');
+        transcript.append(chalk.red(`\n[Guppy] Turn failed: ${result.error}`));
+      }
+    }
+
     async function runTaskTurn(line: string): Promise<void> {
       busy = true;
-      refreshStatus();
+      turnAbort = new AbortController();
       transcript.append(chalk.bold(`You: ${line}`));
+      activity.set('Working…');
+      tui.requestRender();
+      await executeTaskTurn(
+        {
+          id: ulid(),
+          description: line,
+          repoPath: engine.repoPath,
+          tags: [],
+          verificationLevel,
+          createdAt: now(),
+          metadata: { chat: true },
+        },
+        turnAbort.signal,
+      );
+      turnAbort = null;
+      busy = false;
+      refreshContextBar();
+      tui.requestRender();
+      if (shuttingDown) await finishShutdown();
+    }
+
+    /** One read-only planning turn: render the plan + the plan-gate footer. */
+    async function runPlanTaskTurn(line: string): Promise<void> {
+      busy = true;
+      turnAbort = new AbortController();
+      transcript.append(chalk.bold(`You: ${line}`));
+      activity.set('Planning (read-only)…');
+      tui.requestRender();
+      const result = await runPlanTurn(
+        engine.sessionManager,
+        {
+          id: ulid(),
+          description: line,
+          repoPath: engine.repoPath,
+          tags: [],
+          verificationLevel,
+          createdAt: now(),
+          metadata: { chat: true, mode: 'plan' },
+        },
+        engine.savings,
+        turnAbort.signal,
+      );
+      turnAbort = null;
+      activity.clear();
+      if (result.ok) {
+        sessionTurns++;
+        sessionTokens += result.tokens ?? 0;
+        sessionToolCalls += result.toolCalls ?? 0;
+        if (result.tokensSaved !== undefined) sessionSaved += result.tokensSaved;
+        pendingPlan = result.plan ?? null;
+        // Remember the model's plan + its task id so a later /edit diff is
+        // always against the model, and PlanRevised lands on the same task.
+        modelPlan = result.plan ?? null;
+        planTaskId = result.taskId ?? null;
+        if (result.plan) {
+          chatView.setReply(result.plan);
+          transcript.append(chalk.cyan('\nPlan ready — /build to execute · /edit to revise'));
+        } else {
+          chatView.setReply('');
+          transcript.append(
+            chalk.yellow('\n[Guppy] The model produced no plan — describe the task again, or /build to leave plan mode.'),
+          );
+        }
+        transcript.append(
+          renderTurnFooter({
+            durationMs: result.durationMs,
+            ...(result.tokens !== undefined ? { tokens: result.tokens } : {}),
+            ...(result.toolCalls !== undefined ? { toolCalls: result.toolCalls } : {}),
+            ...(result.tokensSaved !== undefined ? { tokensSaved: result.tokensSaved } : {}),
+          }),
+        );
+      } else {
+        chatView.setReply('');
+        transcript.append(chalk.red(`\n[Guppy] Plan failed: ${result.error}`));
+      }
+      busy = false;
+      refreshContextBar();
+      tui.requestRender();
+      if (shuttingDown) await finishShutdown();
+    }
+
+    /** Approve the pending plan and execute it through the gated loop. */
+    async function runApprovedBuild(plan: string): Promise<void> {
+      busy = true;
+      turnAbort = new AbortController();
+      activity.set('Executing the approved plan…');
       tui.requestRender();
       const task: Task = {
         id: ulid(),
-        description: line,
+        description: plan,
         repoPath: engine.repoPath,
         tags: [],
         verificationLevel,
         createdAt: now(),
-        metadata: { chat: true },
+        metadata: { chat: true, approvedPlan: true },
       };
-      const result = await runChatTurn(engine.sessionManager, task);
-      if (result.ok) {
-        const statusText =
-          result.outcome === 'success'
-            ? chalk.green(`completed (${result.outcome})`)
-            : chalk.yellow(`finished (${result.outcome})`);
-        transcript.append(`\n[Guppy] Task ${statusText}`);
-        transcript.append(
-          chalk.gray(
-            `  Duration: ${result.durationMs}ms  Tokens: ${result.tokens ?? 0}  Tool calls: ${result.toolCalls ?? 0}  ` +
-              `Tests: ${result.passes ?? 0} passed / ${result.failures ?? 0} failed`,
-          ),
-        );
-      } else {
-        transcript.append(chalk.red(`\n[Guppy] Turn failed: ${result.error}`));
-      }
+      emitPlanApproved(engine.eventStore, task.id, ulid(), plan);
+      await executeTaskTurn(task, turnAbort.signal);
+      turnAbort = null;
       busy = false;
-      refreshStatus();
+      refreshContextBar();
       tui.requestRender();
       if (shuttingDown) await finishShutdown();
     }
+
+    /**
+     * Store a hand-revised plan verbatim (no model call) and re-render it with
+     * the plan gate so the user can `/build` it. The revised text replaces the
+     * model-produced plan; `PlanApproved` at `/build` records whatever was
+     * actually approved.
+     */
+    const saveRevisedPlan = (text: string): void => {
+      const revised = text.trim();
+      editingPlan = false;
+      if (!revised) {
+        // Nothing entered: keep the previous plan, just leave revise mode.
+        refreshHint();
+        tui.requestRender();
+        return;
+      }
+      // Record the edit against the model's plan before it becomes the new
+      // pending plan, so the event log keeps the audit trail.
+      if (planTaskId !== null && modelPlan !== null && revised !== modelPlan) {
+        emitPlanRevised(engine.eventStore, planTaskId, modelPlan, revised);
+      }
+      pendingPlan = revised;
+      chatView.setReply(revised);
+      transcript.append(chalk.cyan('\nPlan ready — /build to execute · /edit to revise'));
+      refreshHint();
+      tui.requestRender();
+    };
 
     async function submitLine(raw: string): Promise<void> {
       const line = raw.trim();
@@ -544,6 +888,12 @@ export function runTui(options: ChatOptions): Promise<void> {
       editor.addToHistory(raw);
       tui.requestRender();
       if (!line) return;
+      // While revising, any command other than /edit cancels the capture and
+      // runs normally; a bare message is captured as the revised plan below.
+      if (editingPlan && line.startsWith('/') && line !== '/edit' && !line.startsWith('/edit ')) {
+        editingPlan = false;
+        refreshHint();
+      }
       if (line === '/exit' || line === '/quit') {
         await requestShutdown();
         return;
@@ -591,8 +941,97 @@ export function runTui(options: ChatOptions): Promise<void> {
         tui.requestRender();
         return;
       }
+      if (line === '/theme' || line.startsWith('/theme ')) {
+        const mode = line.slice('/theme '.length).trim() as ThemeMode;
+        if (mode !== 'dark' && mode !== 'light') {
+          transcript.append(chalk.yellow('Usage: /theme <dark|light> (currently ' + themeMode + ').'));
+        } else {
+          applyTheme(mode);
+          transcript.append(chalk.gray(`Theme set to ${mode}.`));
+        }
+        tui.requestRender();
+        return;
+      }
       if (line === '/setup' || line.startsWith('/setup ')) {
         setupProvider(line);
+        return;
+      }
+      if (line === '/plan') {
+        if (busy) {
+          transcript.append(chalk.yellow('Still working — wait for the current turn to finish.'));
+        } else if (mode === 'plan') {
+          transcript.append(chalk.yellow('Already in plan mode.'));
+        } else {
+          mode = 'plan';
+          pendingPlan = null;
+          modelPlan = null;
+          planTaskId = null;
+          editingPlan = false;
+          transcript.append(
+            chalk.gray('Plan mode — messages are read-only planning turns (no edits). /build to approve and run.'),
+          );
+          refreshContextBar();
+          refreshHint();
+        }
+        tui.requestRender();
+        return;
+      }
+      if (line === '/build') {
+        if (busy) {
+          transcript.append(chalk.yellow('Still working — wait for the current turn to finish.'));
+          tui.requestRender();
+          return;
+        }
+        if (mode === 'plan' && pendingPlan) {
+          const plan = pendingPlan;
+          pendingPlan = null;
+          modelPlan = null;
+          planTaskId = null;
+          editingPlan = false;
+          mode = 'build';
+          refreshContextBar();
+          refreshHint();
+          tui.requestRender();
+          await runApprovedBuild(plan);
+          return;
+        }
+        if (mode === 'plan' && !pendingPlan) {
+          mode = 'build';
+          modelPlan = null;
+          planTaskId = null;
+          editingPlan = false;
+          transcript.append(chalk.gray('Build mode — no plan pending. Describe a task to run it.'));
+          refreshContextBar();
+          refreshHint();
+          tui.requestRender();
+          return;
+        }
+        transcript.append(chalk.yellow('Already in build mode.'));
+        tui.requestRender();
+        return;
+      }
+      if (line === '/edit' || line.startsWith('/edit ')) {
+        if (busy) {
+          transcript.append(chalk.yellow('Still working — wait for the current turn to finish.'));
+          tui.requestRender();
+          return;
+        }
+        if (!pendingPlan) {
+          transcript.append(chalk.yellow('No plan to revise — /plan <task> to produce one first.'));
+          tui.requestRender();
+          return;
+        }
+        const inline = line.slice('/edit '.length).trim();
+        if (inline) {
+          saveRevisedPlan(inline);
+        } else {
+          editingPlan = true;
+          transcript.append(
+            chalk.gray('Revise the plan — type your changes (Shift+Enter for newlines), then Enter to save. Ctrl+C cancels.'),
+          );
+          refreshHint();
+          tui.requestRender();
+        }
         return;
       }
       if (line.startsWith('/')) {
@@ -605,6 +1044,14 @@ export function runTui(options: ChatOptions): Promise<void> {
         tui.requestRender();
         return;
       }
+      if (editingPlan) {
+        saveRevisedPlan(line);
+        return;
+      }
+      if (mode === 'plan') {
+        await runPlanTaskTurn(line);
+        return;
+      }
       await runTaskTurn(line);
     }
 
@@ -613,7 +1060,19 @@ export function runTui(options: ChatOptions): Promise<void> {
     };
 
     transcript.appendLines(welcomeLines());
-    refreshStatus();
+    refreshContextBar();
     tui.start();
+
+    // Auto-detect the terminal scheme once the alt screen is live (best-effort;
+    // the OSC query needs the terminal running). Falls back to the dark
+    // palette on a non-responding terminal. /theme can override afterwards.
+    void tui
+      .queryTerminalColorScheme({ timeoutMs: 1_000 })
+      .then((scheme) => {
+        if (scheme === 'light' || scheme === 'dark') applyTheme(scheme);
+      })
+      .catch(() => {
+        // Unknown scheme: keep the boot-time dark palette.
+      });
   });
 }

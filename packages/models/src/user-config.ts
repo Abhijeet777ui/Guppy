@@ -77,6 +77,57 @@ export function maskKey(key: string | undefined): string {
 }
 
 /**
+ * Provider ids whose endpoints don't need an API key (local runtimes served
+ * from the host, e.g. Ollama / LM Studio). Used to skip the no-key gate.
+ */
+const NO_KEY_PROVIDERS = new Set(['ollama', 'lmstudio', 'lm-studio', 'local', 'vllm']);
+
+/**
+ * Provider id → the environment variable that conventionally holds its key.
+ * Mirrors the core client's `PROVIDER_API_KEY_ENV` so first-run detection
+ * doesn't depend on `@guppy/core` at runtime.
+ */
+const PROVIDER_KEY_ENV: Record<string, string> = {
+  openai: 'OPENAI_API_KEY',
+  openrouter: 'OPENROUTER_API_KEY',
+  nvidia: 'NVIDIA_API_KEY',
+  nim: 'NVIDIA_API_KEY',
+  prime: 'PRIME_API_KEY',
+  anthropic: 'ANTHROPIC_API_KEY',
+  groq: 'GROQ_API_KEY',
+  google: 'GEMINI_API_KEY',
+  deepseek: 'DEEPSEEK_API_KEY',
+  mistral: 'MISTRAL_API_KEY',
+  xai: 'XAI_API_KEY',
+  cerebras: 'CEREBRAS_API_KEY',
+  together: 'TOGETHER_API_KEY',
+  fireworks: 'FIREWORKS_API_KEY',
+};
+
+/**
+ * True when some usable key exists — a configured preset key, a known
+ * provider env var, or the generic OpenAI fallback. This drives the
+ * first-run no-key gate: when false and nothing was explicitly supplied,
+ * `run`/`chat` redirect to onboarding instead of hitting a dead fallback
+ * model.
+ */
+export function hasAnyApiKey(config: UserConfig = loadUserConfig()): boolean {
+  if (
+    Object.values(config.providers).some(
+      (p) => typeof p.apiKey === 'string' && p.apiKey.trim() !== '',
+    )
+  ) {
+    return true;
+  }
+  return Object.values(PROVIDER_KEY_ENV).some((v) => process.env[v]);
+}
+
+/** True when the provider serves a local model that needs no API key. */
+export function isNoKeyProvider(provider: string | undefined): boolean {
+  return provider !== undefined && NO_KEY_PROVIDERS.has(provider);
+}
+
+/**
  * Resolve effective runtime identity from CLI flags + user config. The config
  * `default` (a provider/model pair) applies only when *neither* `--model` nor
  * `--provider` was given, so an explicit `--provider openrouter` never inherits

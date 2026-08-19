@@ -30,6 +30,20 @@ function stringArg(args: Record<string, unknown>, key: string): string {
   return typeof value === 'string' ? value : '';
 }
 
+/**
+ * The native tools that cannot mutate the workspace. Plan mode (Slice 4)
+ * exposes exactly this set — a plan can read and search, but it can never
+ * edit, run commands, or patch. External (MCP) tools are excluded from plan
+ * mode by construction, since their read-only-ness can't be proven.
+ */
+export const READ_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'read_file',
+  'list_files',
+  'search',
+  'git_status',
+  'git_diff',
+]);
+
 export function buildGuppyTools(workspaceManager: WorkspaceManager): GuppyTool[] {
   return [
     {

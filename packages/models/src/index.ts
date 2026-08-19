@@ -11,6 +11,8 @@ export type {
   CatalogModel,
   ListModelsOptions,
 } from './catalog.js';
+export type { LiveModelsResult } from './live-models.js';
+export { fetchLiveModels } from './live-models.js';
 export {
   isCoreCompatible,
   listProviders,
@@ -35,4 +37,6 @@ export {
   saveUserConfig,
   maskKey,
   resolveRuntimeOptions,
+  hasAnyApiKey,
+  isNoKeyProvider,
 } from './user-config.js';

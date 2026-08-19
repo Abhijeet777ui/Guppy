@@ -115,7 +115,7 @@ export interface Context {
 
 export interface AgentRuntime {
   initialize(workspace: Workspace): Promise<void>;
-  run(task: Task, context: Context): Promise<Result<Trajectory, Error>>;
+  run(task: Task, context: Context, signal?: AbortSignal): Promise<Result<Trajectory, Error>>;
   resume(checkpoint: Checkpoint): Promise<Result<Trajectory, Error>>;
   shutdown(): Promise<void>;
 }
@@ -125,13 +125,19 @@ export interface Trajectory {
   taskId: ULID;
   sessionId: ULID;
   events: Event[];
-  outcome: 'success' | 'failure' | 'partial' | 'running';
+  outcome: 'success' | 'failure' | 'partial' | 'cancelled' | 'running';
   /**
    * Human-readable error when the runtime itself failed (e.g. the model client
    * threw after exhausting its retries). Absent when the trajectory ran to
    * completion, even if `outcome` is 'failure'.
    */
   error?: string;
+  /**
+   * The model's final prose answer, recorded when the loop finished with no
+   * remaining tool calls. Absent when the run exhausted its turn budget or
+   * the runtime itself failed.
+   */
+  finalAnswer?: string;
   finalState?: Context;
   metrics: TrajectoryMetrics;
   startedAt: Timestamp;
@@ -159,6 +165,7 @@ export type EventType =
   | 'ContextSelected'
   | 'ModelCalled'
   | 'ModelStreamed'
+  | 'FinalAnswer'
   | 'ToolCalled'
   | 'ToolReturned'
   | 'FileChanged'
@@ -173,6 +180,9 @@ export type EventType =
   | 'CheckpointCreated'
   | 'AgentForked'
   | 'AgentMerged'
+  | 'PlanProduced'
+  | 'PlanRevised'
+  | 'PlanApproved'
   | 'TrajectoryCompleted';
 
 export interface BaseEvent {
@@ -216,6 +226,14 @@ export interface ModelStreamedEvent extends BaseEvent {
     /** Accumulated assistant text so far (grows as the model streams). */
     text: string;
     callId: ULID;
+  };
+}
+
+export interface FinalAnswerEvent extends BaseEvent {
+  type: 'FinalAnswer';
+  payload: {
+    /** The model's final prose answer (recorded when the loop ends with no tool calls). */
+    text: string;
   };
 }
 
@@ -304,6 +322,34 @@ export interface AgentMergedEvent extends BaseEvent {
   };
 }
 
+export interface PlanProducedEvent extends BaseEvent {
+  type: 'PlanProduced';
+  payload: {
+    /** The model's read-only plan (the full markdown reply). */
+    plan: string;
+  };
+}
+
+export interface PlanRevisedEvent extends BaseEvent {
+  type: 'PlanRevised';
+  payload: {
+    /** The plan being revised away from (the model-produced plan). */
+    previous: string;
+    /** The human's revised plan. */
+    revised: string;
+    /** Line diff from `previous` to `revised` (`-` removed, `+` added, `  ` context). */
+    diff: string;
+  };
+}
+
+export interface PlanApprovedEvent extends BaseEvent {
+  type: 'PlanApproved';
+  payload: {
+    /** The plan the user approved for execution. */
+    plan: string;
+  };
+}
+
 export interface TrajectoryCompletedEvent extends BaseEvent {
   type: 'TrajectoryCompleted';
   payload: {
@@ -317,6 +363,8 @@ export interface TrajectoryCompletedEvent extends BaseEvent {
     lastGatePassed?: boolean;
     /** Set when the runtime itself failed (model client error, etc.). */
     error?: string;
+    /** The model's final prose answer, when one was produced. */
+    finalAnswer?: string;
   };
 }
 
@@ -325,6 +373,7 @@ export type Event =
   | ContextSelectedEvent
   | ModelCalledEvent
   | ModelStreamedEvent
+  | FinalAnswerEvent
   | ToolCalledEvent
   | ToolReturnedEvent
   | FileChangedEvent
@@ -335,6 +384,9 @@ export type Event =
   | CheckpointCreatedEvent
   | AgentForkedEvent
   | AgentMergedEvent
+  | PlanProducedEvent
+  | PlanRevisedEvent
+  | PlanApprovedEvent
   | TrajectoryCompletedEvent;
 
 // ============================================================================

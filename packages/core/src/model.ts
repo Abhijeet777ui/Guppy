@@ -34,6 +34,14 @@ export interface ModelConfig {
    */
   timeoutMs?: number;
   /**
+   * Idle timeout in ms once the response has started (time between stream
+   * chunks, or while the non-streaming body is being read). Defaults to
+   * 60_000. Guards against endpoints that send headers and then go silent —
+   * the request timeout above only covers time-to-first-byte, so without this
+   * a stalled stream could hang forever.
+   */
+  streamIdleTimeoutMs?: number;
+  /**
    * Client-side rate limit: max requests per minute against this endpoint.
    * When set, the client paces requests (across all client instances for the
    * same provider + base URL) under a 60-second sliding window, so free-tier
