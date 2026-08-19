@@ -191,6 +191,8 @@ function makeSessionManager(
     workspaceManager: wm,
     memoryStore,
     maxTurns: 2,
+    // Hermetic: never let a real ~/.guppy/skills leak into this fixture.
+    userSkillsDir: join(dir, 'no-user-skills'),
   });
 }
 
@@ -241,6 +243,8 @@ describe('repo skills (SessionManager → context → gate)', () => {
         workspaceManager: wm,
         memoryStore,
         maxTurns: 2,
+        // Hermetic: never let a real ~/.guppy/skills leak into this fixture.
+        userSkillsDir: join(dir, 'no-user-skills'),
       });
 
       const result = await sessionManager.run(makeTask(fixtureDir));

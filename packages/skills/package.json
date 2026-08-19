@@ -1,0 +1,29 @@
+{
+  "name": "@guppy/skills",
+  "version": "1.0.0",
+  "description": "Distributed skills: install/list/remove skills from a registry or URL into the per-user skills dir",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "lint": "biome check ."
+  },
+  "dependencies": {
+    "@guppy/contracts": "workspace:*",
+    "@guppy/context-engine": "workspace:*"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.8.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  },
+  "type": "module"
+}

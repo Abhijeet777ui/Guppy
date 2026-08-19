@@ -18,7 +18,8 @@ import type {
 import { now, ok } from '@guppy/contracts';
 import { encoding_for_model } from 'tiktoken';
 
-export { loadSkills, saveSkill } from './skills.js';
+export { loadSkills, saveSkill, parseSkillMarkdown, slug, skillId, isValidSkillName } from './skills.js';
+export type { ParsedSkill } from './skills.js';
 
 export interface ContextEngineConfig {
   maxTokens: number;
@@ -210,7 +211,10 @@ export class ContextEngine {
   private extractKeywords(text: string): string[] {
     return text
       .toLowerCase()
-      .split(/[\s\(\)\{\}\[\];,.]+/)
+      // Strip markdown/punctuation too: a task mentioning \u0060clamp\u0060
+      // (backticked) must produce the keyword "clamp", not "\u0060clamp\u0060",
+      // or skill/tag matching silently misses every backticked identifier.
+      .split(/[\s\(\)\{\}\[\];,.\u0060]+/)
       .filter(w => w.length > 3)
       .slice(0, 50);
   }

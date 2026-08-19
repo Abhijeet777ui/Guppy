@@ -14,13 +14,16 @@
  * `loadSkills` reads the directory (missing/malformed files are skipped);
  * `saveSkill` writes a validated file and returns the in-memory `Skill`. The
  * context engine's `selectSkills` then picks the relevant ones per task.
+ *
+ * `parseSkillMarkdown`, `slug`, and `skillId` are exported for `@guppy/skills`,
+ * which installs distributed skills into the same file format.
  */
 
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Skill, ULID } from '@guppy/contracts';
 
-function slug(name: string): string {
+export function slug(name: string): string {
   return (
     name
       .trim()
@@ -31,19 +34,32 @@ function slug(name: string): string {
 }
 
 /** Stable, name-derived id (branded as ULID; deterministic across loads). */
-function skillId(name: string): ULID {
+export function skillId(name: string): ULID {
   return `skill-${slug(name)}` as ULID;
 }
 
-interface ParsedSkill {
+/** The name rule shared by `saveSkill` and installers (letters, digits, spaces, - and _). */
+export function isValidSkillName(name: string): boolean {
+  return /^[a-zA-Z0-9][a-zA-Z0-9 _-]*$/.test(name.trim());
+}
+
+export interface ParsedSkill {
   name: string;
   description: string;
   prompt: string;
   tags: string[];
+  /** Provenance: where the skill was installed from (`builtin`, a URL, or a path). */
+  source?: string;
+  /** Provenance: ISO install timestamp, written by the installer. */
+  installedAt?: string;
 }
 
-/** Parse a `.md` skill file: `---` front-matter (`key: value` lines) + body. */
-function parseSkillMarkdown(content: string): ParsedSkill | null {
+/**
+ * Parse a `.md` skill file: `---` front-matter (`key: value` lines) + body.
+ * `source` and `installed-at` are provenance keys the installer appends;
+ * every other key is ignored, so author-written skills parse unchanged.
+ */
+export function parseSkillMarkdown(content: string): ParsedSkill | null {
   const lines = content.split(/\r?\n/);
   if (lines.length < 2 || lines[0]!.trim() !== '---') return null;
 
@@ -77,6 +93,8 @@ function parseSkillMarkdown(content: string): ParsedSkill | null {
       .split(',')
       .map((t) => t.trim())
       .filter((t) => t !== ''),
+    ...(fields['source'] ? { source: fields['source'] } : {}),
+    ...(fields['installed-at'] ? { installedAt: fields['installed-at'] } : {}),
   };
 }
 
@@ -119,7 +137,7 @@ export function saveSkill(
   input: { name: string; description: string; prompt?: string; tags?: string[] },
 ): Skill {
   const name = input.name.trim();
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9 _-]*$/.test(name)) {
+  if (!isValidSkillName(name)) {
     throw new Error(`Invalid skill name ${JSON.stringify(name)} — use letters, digits, spaces, - and _`);
   }
   const description = input.description.trim().replace(/\s+/g, ' ');
