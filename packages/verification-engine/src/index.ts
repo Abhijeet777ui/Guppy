@@ -69,6 +69,18 @@ export class VerificationEngine {
     return this.toolInstalled(LEVEL_COMMANDS[level]);
   }
 
+  /**
+   * Human-readable reason a level can't run, e.g. `'tsc' is not installed in
+   * this repo`. Undefined for levels with no tool (level 0) or when the tool
+   * is installed. Single wording shared by the engine and the session manager
+   * so the same condition never reads two ways.
+   */
+  levelSkipReason(level: VerificationLevel): string | undefined {
+    const tool = LEVEL_COMMANDS[level]?.[0];
+    if (!tool) return undefined;
+    return `'${tool}' is not installed in this repo`;
+  }
+
   async verify(
     level: VerificationLevel,
     context: Context,
@@ -324,9 +336,7 @@ export class VerificationEngine {
       if (command.length > 0 && !this.toolInstalled(command)) {
         // A missing tool is an environment condition, never an agent fault:
         // skip the level with a note instead of failing the ladder on it.
-        console.log(
-          `[Verification] Level ${level} skipped: '${command[0]}' is not installed in this repo`,
-        );
+        console.log(`[Verification] Level ${level} skipped: ${this.levelSkipReason(level as VerificationLevel)}`);
         lastResult = {
           ...lastResult,
           level: level as VerificationLevel,

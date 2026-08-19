@@ -82,6 +82,29 @@ const PROVIDER_API_KEY_ENV: Record<string, string> = {
 const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
 
 /**
+ * Provider name → OpenAI-compatible base URL. Mirrors the key map above so
+ * that `provider: 'openrouter'` (or nvidia, groq, …) routes to the right
+ * endpoint without a manual `--base-url`. Without this, a provider that isn't
+ * OpenAI silently hits `api.openai.com` with that provider's key and 401s.
+ * An explicit `baseUrl` always wins; unknown providers keep the OpenAI
+ * default.
+ */
+const PROVIDER_BASE_URL: Record<string, string> = {
+  openai: 'https://api.openai.com/v1',
+  openrouter: 'https://openrouter.ai/api/v1',
+  nvidia: 'https://integrate.api.nvidia.com/v1',
+  nim: 'https://integrate.api.nvidia.com/v1',
+  groq: 'https://api.groq.com/openai/v1',
+  google: 'https://generativelanguage.googleapis.com/v1beta/openai',
+  deepseek: 'https://api.deepseek.com/v1',
+  mistral: 'https://api.mistral.ai/v1',
+  xai: 'https://api.x.ai/v1',
+  cerebras: 'https://api.cerebras.ai/v1',
+  together: 'https://api.together.xyz/v1',
+  fireworks: 'https://api.fireworks.ai/inference/v1',
+};
+
+/**
  * Resolve the effective API key for a model config: the explicit key wins,
  * then a provider-specific environment variable, then a generic fallback.
  */
@@ -93,5 +116,5 @@ export function resolveApiKey(config: ModelConfig): string | undefined {
 }
 
 export function resolveBaseUrl(config: ModelConfig): string {
-  return config.baseUrl?.replace(/\/+$/, '') ?? DEFAULT_BASE_URL;
+  return config.baseUrl?.replace(/\/+$/, '') ?? PROVIDER_BASE_URL[config.provider] ?? DEFAULT_BASE_URL;
 }

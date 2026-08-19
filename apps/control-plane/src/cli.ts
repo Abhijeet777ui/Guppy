@@ -29,6 +29,7 @@ import {
   listProviders,
   loadUserConfig,
   maskKey,
+  PROVIDER_KEY_ENV,
   resolveRuntimeOptions,
   saveUserConfig,
   selectModel,
@@ -38,6 +39,7 @@ import {
   ALL_CONFIGS,
   analyzeContextCaptures,
   attachContextHealth,
+  DRY_RUN_RED_AS_EXPECTED,
   effectiveRetrySettings,
   loadDataset,
   runBench,
@@ -435,13 +437,42 @@ program
 
     if (result.ok) {
       const trajectory = result.value;
-      console.log(chalk.green('\n[Guppy] Task completed!'));
-      console.log(chalk.gray(`  Outcome: ${trajectory.outcome}`));
+      // A failure with zero model tokens / tool calls means the model was
+      // never reachable (e.g. 429 quota after retries, bad key, wrong base
+      // URL). The generic failure summary below would mask that with
+      // "Outcome: failure · Tests passed: 0" — say what actually happened.
+      if (
+        trajectory.outcome === 'failure' &&
+        trajectory.error &&
+        trajectory.metrics.tokensTotal === 0 &&
+        trajectory.metrics.toolCalls === 0
+      ) {
+        console.error(chalk.red('\n[Guppy] Model unreachable — the agent could not contact the model provider.'));
+        console.error(chalk.gray(`  ${trajectory.error}`));
+        console.error(chalk.gray('  No model tokens were consumed and no changes were made to the repo.'));
+        console.error(chalk.gray('  Check the API key, quota, and base URL, then re-run the task.'));
+        await mcpBridge?.close();
+        process.exit(1);
+      }
+      // The header must match what actually happened. The runtime never runs
+      // the tests itself (the verification engine does, outside the
+      // trajectory), so `metrics.passes/failures` are always 0 — printing
+      // "Tests passed: 0" on a gate failure was the misleading line.
+      if (trajectory.outcome === 'success') {
+        console.log(chalk.green('\n[Guppy] Task completed!'));
+        console.log(chalk.gray(`  Outcome: ${trajectory.outcome}`));
+      } else if (trajectory.lastGatePassed === false) {
+        console.error(chalk.yellow('\n[Guppy] Task failed the verification gate.'));
+        console.error(chalk.gray(`  Outcome: ${trajectory.outcome}`));
+        for (const gateError of trajectory.gateErrors ?? []) {
+          console.error(chalk.gray(`  Gate: ${gateError}`));
+        }
+      } else {
+        console.error(chalk.yellow(`\n[Guppy] Task ended (${trajectory.outcome}).`));
+      }
       console.log(chalk.gray(`  Duration: ${duration}ms`));
       console.log(chalk.gray(`  Tokens: ${trajectory.metrics.tokensTotal}`));
       console.log(chalk.gray(`  Tool calls: ${trajectory.metrics.toolCalls}`));
-      console.log(chalk.gray(`  Tests passed: ${trajectory.metrics.passes}`));
-      console.log(chalk.gray(`  Tests failed: ${trajectory.metrics.failures}`));
       if (savedTokens !== undefined) {
         console.log(chalk.gray(`  Context savings (ContextOps, est.): ≈${savedTokens}`));
       }
@@ -799,13 +830,19 @@ program
   .option('--config <list>', `Configs, comma-separated (${ALL_CONFIGS.join(', ')})`, 'guppy-core')
   .option('--tasks <list>', 'Builtin task ids / kinds / prefixes, comma-separated (default: all)')
   .option('--out <dir>', 'Output directory')
-  .option('--model <id>', 'Model for the guppy-core config', 'claude-3-5-sonnet')
-  .option('--provider <name>', 'Model provider for the guppy-core config (openai, openrouter, nvidia, …)')
+  .option(
+    '--model <id>',
+    "Model for the guppy-core config (default: the free-tier nemotron on OpenRouter — this tool exists to verify on free tiers, not to bill a paid model)",
+    'nvidia/nemotron-3-super-120b-a12b:free',
+  )
+  .option('--provider <name>', 'Model provider for the guppy-core config (openai, openrouter, nvidia, …)', 'openrouter')
   .option('--base-url <url>', 'OpenAI-compatible API base URL for the guppy-core config')
   .option('--api-key <key>', 'API key for the guppy-core config (provider env var used when omitted)')
   .option('--max-attempts <n>', 'Max closed-loop attempts per task', '3')
   .option('--attempt-timeout <ms>', 'Per-attempt timeout in ms', '600000')
   .option('--model-timeout-ms <ms>', 'Per-request timeout in ms for the guppy-core config')
+  .option('--max-history-tokens <n>', 'History-token budget before older turns are compressed into a recap (0 = never compress)')
+  .option('--history-summary <mode>', "Summarize the compressed history with an LLM ('llm') or keep the deterministic recap ('none')", 'none')
   .option('--skills <dir>', 'Skills dir injected into every task for the guppy-core-skill config (default: the installed per-user skills dir)')
   .option('--dry-run', 'Materialize fixtures and gate them; never invoke an LLM', false)
   .action(async (options: Record<string, string | boolean>) => {
@@ -861,8 +898,29 @@ program
       ...(typeof options['skills'] === 'string' && options['skills'] !== ''
         ? { skillsDir: resolve(String(options['skills'])) }
         : {}),
+      ...(optNumber(options['maxHistoryTokens']) !== undefined
+        ? { maxHistoryTokens: optNumber(options['maxHistoryTokens'])! }
+        : {}),
+      ...(options['historySummary'] === 'llm' ? { historySummary: 'llm' as const } : {}),
       dryRun: options['dryRun'] === true,
     };
+
+    // A real (non-dry-run) bench needs a key for the resolved provider.
+    // Fail with onboarding guidance up front instead of a surprise 401 after
+    // the fixtures have already materialized.
+    if (!benchOptions.dryRun) {
+      const provider = benchOptions.provider ?? 'openrouter';
+      const config = loadUserConfig();
+      const presetKey = config.providers[provider]?.apiKey;
+      const explicitKey = typeof options['apiKey'] === 'string' && options['apiKey'] !== '';
+      const envKey = PROVIDER_KEY_ENV[provider] ?? 'OPENAI_API_KEY';
+      if (!explicitKey && !presetKey && !process.env[envKey]) {
+        console.error(chalk.yellow(`[Guppy] No API key configured for provider "${provider}".`));
+        console.error(chalk.gray('  Run `guppy setup` to add a key, or pass --api-key / --provider / --model explicitly.'));
+        console.error(chalk.gray('  Dry runs need no key: `guppy benchmark --dry-run`.'));
+        process.exit(1);
+      }
+    }
 
     console.log(chalk.blue(`[Guppy] Benchmark (suite: ${suite})`));
     console.log(chalk.gray(`  Out:      ${outDir}`));
@@ -882,12 +940,26 @@ program
     const { reportPath, jsonPath } = writeReport(results, benchOptions);
 
     const passed = results.filter((r) => r.passed).length;
-    let done = `\nDone: ${passed}/${results.length} passed. Report: ${reportPath} | Data: ${jsonPath}`;
-    const scored = results.filter((r) => r.contextHealth && !r.contextHealth.skipped);
-    if (scored.length > 0) {
-      const saved = scored.reduce((a, r) => a + (r.contextHealth?.tokensSaved ?? 0), 0);
-      const tool = scored.find((r) => r.contextHealth?.tool)?.contextHealth?.tool ?? 'contextops';
-      done += ` | Tokens saved (${tool}, est.): ${saved}`;
+    // Dry runs never "pass" (passed is always false) — they verify fixtures,
+    // so "Done: 0/1 passed" would read as a broken tool. Say what a dry run
+    // actually checked.
+    let done: string;
+    if (benchOptions.dryRun) {
+      const redOk = results.filter((r) => r.error === DRY_RUN_RED_AS_EXPECTED).length;
+      const bad = results.length - redOk;
+      done =
+        bad === 0
+          ? `\nDry-run OK: ${redOk}/${results.length} fixture(s) red as expected (mutations verified). Report: ${reportPath} | Data: ${jsonPath}`
+          : `\nDry-run FAILED: ${bad} fixture(s) unexpectedly green — the mutation did not break the suite. Report: ${reportPath} | Data: ${jsonPath}`;
+      if (bad > 0) process.exitCode = 1;
+    } else {
+      done = `\nDone: ${passed}/${results.length} passed. Report: ${reportPath} | Data: ${jsonPath}`;
+      const scored = results.filter((r) => r.contextHealth && !r.contextHealth.skipped);
+      if (scored.length > 0) {
+        const saved = scored.reduce((a, r) => a + (r.contextHealth?.tokensSaved ?? 0), 0);
+        const tool = scored.find((r) => r.contextHealth?.tool)?.contextHealth?.tool ?? 'contextops';
+        done += ` | Tokens saved (${tool}, est.): ${saved}`;
+      }
     }
     console.log(chalk.bold(done));
   });
@@ -1076,37 +1148,52 @@ mcpCmd
   .description('Register an MCP server (spawned over stdio when the agent runs)')
   .option('--args <args>', 'Comma-separated arguments to the server command')
   .option('--env <key=value,...>', 'Comma-separated extra environment variables')
+  .option('--force', 'Overwrite an already-registered server with the same name')
   .option('--config <path>', 'Config file (default: ~/.guppy/mcp.json)')
   .action((name, command, options) => {
-    const config = addMcpServer(
-      name,
-      {
-        command,
-        ...(options.args ? { args: options.args.split(',').map((a: string) => a.trim()).filter(Boolean) } : {}),
-        ...(options.env
-          ? {
-              env: Object.fromEntries(
-                options.env.split(',').map((kv: string) => {
-                  const eq = kv.indexOf('=');
-                  if (eq <= 0) throw new Error(`env must be key=value, got "${kv}"`);
-                  return [kv.slice(0, eq).trim(), kv.slice(eq + 1).trim()];
-                }),
-              ),
-            }
-          : {}),
-      },
-      options.config ? resolve(options.config) : undefined,
-    );
-    console.log(chalk.green(`[Guppy] MCP server "${name}" registered.`));
-    console.log(chalk.gray(`  ${defaultMcpConfigPath()}`));
-    console.log(
-      chalk.yellow(
-        '  MCP servers start inside the workspace with a scrubbed environment (no API keys or tokens) and are' +
-          ' force-killed with their whole process tree when the session ends. This is containment, not a jail:' +
-          ' a server still runs with your account permissions. Only add servers you trust.',
-      ),
-    );
-    console.log(chalk.gray(`  ${config.mcpServers[name] ? 'It will load automatically on the next run/chat (--no-mcp to skip).' : ''}`));
+    const path = options.config ? resolve(options.config) : undefined;
+    try {
+      const config = addMcpServer(
+        name,
+        {
+          command,
+          ...(options.args ? { args: options.args.split(',').map((a: string) => a.trim()).filter(Boolean) } : {}),
+          ...(options.env
+            ? {
+                env: Object.fromEntries(
+                  options.env.split(',').map((kv: string) => {
+                    const eq = kv.indexOf('=');
+                    if (eq <= 0) throw new Error(`env must be key=value, got "${kv}"`);
+                    return [kv.slice(0, eq).trim(), kv.slice(eq + 1).trim()];
+                  }),
+                ),
+              }
+            : {}),
+        },
+        path,
+        { force: options.force === true },
+      );
+      console.log(chalk.green(`[Guppy] MCP server "${name}" registered.`));
+      console.log(chalk.gray(`  ${path ?? defaultMcpConfigPath()}`));
+      console.log(
+        chalk.yellow(
+          '  MCP servers start inside the workspace with a scrubbed environment (no API keys or tokens) and are' +
+            ' force-killed with their whole process tree when the session ends. This is containment, not a jail:' +
+            ' a server still runs with your account permissions. Only add servers you trust.',
+        ),
+      );
+      console.log(
+        chalk.gray(
+          config.mcpServers[name]
+            ? '  It will load automatically on the next run/chat (--no-mcp to skip).'
+            : '',
+        ),
+      );
+    } catch (e) {
+      console.error(chalk.red('[Guppy] Could not register MCP server:'), e instanceof Error ? e.message : String(e));
+      console.error(chalk.gray('  Usage: guppy mcp add <name> <command> [--args ...] [--env k=v,...] [--force]'));
+      process.exit(1);
+    }
   });
 
 mcpCmd

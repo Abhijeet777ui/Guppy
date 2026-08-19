@@ -14,6 +14,7 @@ import { rmSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { BENCH_TASKS, sanityCheckTask, selectTasks } from './fixtures.js';
 import {
   ALL_CONFIGS,
+  DRY_RUN_RED_AS_EXPECTED,
   effectiveRetrySettings,
   resolvePrimeBinary,
   runBench,
@@ -89,8 +90,8 @@ program
   .option('--config <list>', `Configs, comma-separated (${ALL_CONFIGS.join(', ')})`, ALL_CONFIGS.join(','))
   .option('--tasks <list>', 'Task ids / kinds / prefixes, comma-separated (default: all)')
   .option('--out <dir>', 'Output directory', '')
-  .option('--model <id>', 'Model pattern passed to the runtimes', 'claude-3-5-sonnet')
-  .option('--provider <name>', 'Model provider for the guppy-core runtime (openai, openrouter, nvidia, …)')
+  .option('--model <id>', 'Model pattern passed to the runtimes', 'nvidia/nemotron-3-super-120b-a12b:free')
+  .option('--provider <name>', 'Model provider for the guppy-core runtime (openai, openrouter, nvidia, …)', 'openrouter')
   .option('--base-url <url>', 'OpenAI-compatible API base URL for the guppy-core runtime')
   .option('--api-key <key>', 'API key for the guppy-core runtime (provider env var used when omitted)')
   .option('--wsl <distro>', 'Run prime-agent inside this WSL2 distro (Windows hosts)')
@@ -194,12 +195,26 @@ program
     const { reportPath, jsonPath } = writeReport(results, benchOptions);
 
     const passed = results.filter((r) => r.passed).length;
-    let done = `\nDone: ${passed}/${results.length} passed. Report: ${reportPath} | Data: ${jsonPath}`;
-    const scored = results.filter((r) => r.contextHealth && !r.contextHealth.skipped);
-    if (scored.length > 0) {
-      const saved = scored.reduce((a, r) => a + (r.contextHealth?.tokensSaved ?? 0), 0);
-      const tool = scored.find((r) => r.contextHealth?.tool)?.contextHealth?.tool ?? 'contextops';
-      done += ` | Tokens saved (${tool}, est.): ${saved}`;
+    // Dry runs never "pass" (passed is always false) — they verify fixtures.
+    // "Done: 0/1 passed" would read as a broken tool; say what a dry run
+    // actually checked instead.
+    let done: string;
+    if (benchOptions.dryRun) {
+      const redOk = results.filter((r) => r.error === DRY_RUN_RED_AS_EXPECTED).length;
+      const bad = results.length - redOk;
+      done =
+        bad === 0
+          ? `\nDry-run OK: ${redOk}/${results.length} fixture(s) red as expected (mutations verified). Report: ${reportPath} | Data: ${jsonPath}`
+          : `\nDry-run FAILED: ${bad} fixture(s) unexpectedly green — the mutation did not break the suite. Report: ${reportPath} | Data: ${jsonPath}`;
+      if (bad > 0) process.exitCode = 1;
+    } else {
+      done = `\nDone: ${passed}/${results.length} passed. Report: ${reportPath} | Data: ${jsonPath}`;
+      const scored = results.filter((r) => r.contextHealth && !r.contextHealth.skipped);
+      if (scored.length > 0) {
+        const saved = scored.reduce((a, r) => a + (r.contextHealth?.tokensSaved ?? 0), 0);
+        const tool = scored.find((r) => r.contextHealth?.tool)?.contextHealth?.tool ?? 'contextops';
+        done += ` | Tokens saved (${tool}, est.): ${saved}`;
+      }
     }
     console.log(chalk.bold(done));
   });

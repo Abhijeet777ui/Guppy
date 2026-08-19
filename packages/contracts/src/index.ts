@@ -133,6 +133,19 @@ export interface Trajectory {
    */
   error?: string;
   /**
+   * Verification-gate verdict for gated runs (set by the session manager):
+   * true when the run passed the gate, false when the gate stayed red after
+   * all attempts. Absent for un-gated runs and model-layer failures (which
+   * carry `error` instead).
+   */
+  lastGatePassed?: boolean;
+  /**
+   * The first few gate failure messages when `lastGatePassed` is false — what
+   * the verification gate actually found, so a run summary can say *why* the
+   * task failed instead of a bare outcome.
+   */
+  gateErrors?: string[];
+  /**
    * The model's final prose answer, recorded when the loop finished with no
    * remaining tool calls. Absent when the run exhausted its turn budget or
    * the runtime itself failed.

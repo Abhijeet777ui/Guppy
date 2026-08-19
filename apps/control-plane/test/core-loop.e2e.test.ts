@@ -207,4 +207,87 @@ describe('standalone core loop (SessionManager + gate + memory)', () => {
       await close(mock.server);
     }
   });
+
+  it('short-circuits on an unreachable model (0 tokens) instead of running the gate', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'guppy-core-unreachable-'));
+    tmpDirs.push(dir);
+    const fixtureDir = join(dir, 'fixture');
+    writeFixture(fixtureDir);
+
+    // Every model request answers 429 (quota exhausted), with retries off so
+    // the failure is fast and the error message is the 429 itself.
+    const server = createServer((_req, res) => {
+      res.statusCode = 429;
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ error: { message: 'free-models-per-day quota exhausted' } }));
+    });
+    const url = await listen(server);
+
+    try {
+      const eventStore = createEventStore({ rootDir: join(dir, 'events') });
+      const wm = createWorkspaceManager({ useContainers: false, worktreeBase: join(dir, 'worktrees') });
+      const verifier = createVerificationEngine({
+        eventStore,
+        workspaceManager: wm,
+        projectRoot: fixtureDir,
+        timeout: 60_000,
+      });
+      const memoryStore = createMemoryStore({ rootDir: join(dir, 'memory') });
+      const runtime = createCoreRuntime({
+        eventStore,
+        workspaceManager: wm,
+        model: { provider: 'fake', model: 'fake/nemotron', baseUrl: url, maxRetries: 0 },
+        maxTurns: 10,
+      });
+
+      const task: Task = {
+        id: ulid(),
+        description: 'Fix the failing clamp test.',
+        repoPath: fixtureDir,
+        tags: [],
+        verificationLevel: 3,
+        createdAt: now(),
+        metadata: {},
+      };
+
+      const sessionManager = createSessionManager({
+        repoPath: fixtureDir,
+        agentRuntime: runtime,
+        contextEngine: new ContextEngine(),
+        verificationEngine: verifier,
+        eventStore,
+        workspaceManager: wm,
+        memoryStore,
+        maxTurns: 3,
+      });
+
+      const result = await sessionManager.run(task);
+
+      // The failure surfaces with the real cause, not a masked gate verdict.
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const t = result.value;
+      expect(t.outcome).toBe('failure');
+      expect(t.error).toContain('HTTP 429');
+      expect(t.metrics.tokensTotal).toBe(0);
+      expect(t.metrics.toolCalls).toBe(0);
+
+      // The runtime's audit trail is persisted under the trajectory's session.
+      const persisted = await eventStore.getTrajectory(task.id, t.sessionId);
+      expect(persisted).not.toBeNull();
+      const types = (persisted?.events ?? []).map((e) => e.type);
+      expect(types).toContain('TaskStarted');
+      expect(types).toContain('TrajectoryCompleted');
+      // The post-attempt verification gate must NOT have run — no escalation,
+      // no gate events — the ~85s wasted-gate bug. (The baseline level-1 gate
+      // is skipped for this repo: tsc is not installed, so it emits nothing.)
+      expect(types).not.toContain('VerificationEscalated');
+      expect(types).not.toContain('TestFailed');
+      expect(types).not.toContain('TestPassed');
+
+      await eventStore.close();
+    } finally {
+      await close(server);
+    }
+  });
 });

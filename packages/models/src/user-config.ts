@@ -87,7 +87,7 @@ const NO_KEY_PROVIDERS = new Set(['ollama', 'lmstudio', 'lm-studio', 'local', 'v
  * Mirrors the core client's `PROVIDER_API_KEY_ENV` so first-run detection
  * doesn't depend on `@guppy/core` at runtime.
  */
-const PROVIDER_KEY_ENV: Record<string, string> = {
+export const PROVIDER_KEY_ENV: Record<string, string> = {
   openai: 'OPENAI_API_KEY',
   openrouter: 'OPENROUTER_API_KEY',
   nvidia: 'NVIDIA_API_KEY',

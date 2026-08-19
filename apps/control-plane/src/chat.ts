@@ -318,6 +318,12 @@ export interface ChatTurnResult {
   tokensSaved?: number;
   /** Running session-total saved tokens (ContextOps), when available. */
   tokensSavedTotal?: number;
+  /** True when the model was never reachable (0 tokens, 0 tool calls — e.g. 429). */
+  modelUnreachable?: boolean;
+  /** True when the verification gate stayed red after all attempts. */
+  gateFailed?: boolean;
+  /** The gate's failure messages when `gateFailed` (first few). */
+  gateErrors?: string[];
 }
 
 /**
@@ -349,6 +355,12 @@ export async function runChatTurn(
         tokensSavedTotal = delta.total;
       }
     }
+    const modelUnreachable =
+      t.outcome === 'failure' &&
+      !!t.error &&
+      t.metrics.tokensTotal === 0 &&
+      t.metrics.toolCalls === 0;
+    const gateFailed = t.outcome === 'failure' && t.lastGatePassed === false;
     return {
       ok: true,
       outcome: t.outcome,
@@ -358,6 +370,8 @@ export async function runChatTurn(
       passes: t.metrics.passes,
       failures: t.metrics.failures,
       ...(t.finalAnswer ? { finalAnswer: t.finalAnswer } : {}),
+      ...(modelUnreachable && t.error ? { modelUnreachable: true, error: t.error } : {}),
+      ...(gateFailed ? { gateFailed: true, gateErrors: t.gateErrors } : {}),
       ...(tokensSaved !== undefined ? { tokensSaved } : {}),
       ...(tokensSavedTotal !== undefined ? { tokensSavedTotal } : {}),
     };
@@ -806,8 +820,24 @@ export async function runChat(options: ChatOptions): Promise<void> {
   const runTask = async (task: Task): Promise<void> => {
     const result = await runChatTurn(engine.sessionManager, task, engine.savings);
     if (result.ok) {
+      if (result.modelUnreachable) {
+        console.error(chalk.red(`\n[Guppy] Model unreachable — the agent could not contact the model provider.`));
+        console.error(chalk.gray(`  ${result.error}`));
+        console.error(chalk.gray('  No model tokens were consumed and no changes were made.'));
+        return;
+      }
       if (result.finalAnswer) {
         console.log(`\n${result.finalAnswer}`);
+      }
+      if (result.gateFailed) {
+        // The gate verdict is the failure reason — say it instead of the
+        // meaningless "Tests: 0 passed / 0 failed" (the runtime never runs
+        // the tests; the verification engine does).
+        console.error(chalk.yellow('\n[Guppy] Turn failed the verification gate.'));
+        for (const gateError of result.gateErrors ?? []) {
+          console.error(chalk.gray(`  Gate: ${gateError}`));
+        }
+        return;
       }
       const status =
         result.outcome === 'success'

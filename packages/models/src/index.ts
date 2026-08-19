@@ -39,4 +39,5 @@ export {
   resolveRuntimeOptions,
   hasAnyApiKey,
   isNoKeyProvider,
+  PROVIDER_KEY_ENV,
 } from './user-config.js';

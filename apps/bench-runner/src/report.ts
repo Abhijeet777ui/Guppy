@@ -8,6 +8,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
+  DRY_RUN_RED_AS_EXPECTED,
   effectiveRetrySettings,
   type BenchConfigKind,
   type BenchOptions,
@@ -196,8 +197,25 @@ export function renderReport(results: TaskRunResult[], options: BenchOptions): s
     lines.push('');
   }
 
+  // --- Dry-run -----------------------------------------------------------------
+  // A dry run never "passes" — its verdict is about the fixture, so give it
+  // its own section instead of dumping "fixture red as expected" into Failures.
+  if (options.dryRun) {
+    const redOk = results.filter((r) => r.error === DRY_RUN_RED_AS_EXPECTED).length;
+    const bad = results.length - redOk;
+    lines.push('## Dry-run');
+    lines.push('');
+    lines.push(
+      bad === 0
+        ? `- ${redOk}/${results.length} fixture(s) red as expected — mutations verified, a real run would be meaningful.`
+        : `- ${bad}/${results.length} fixture(s) unexpectedly green — the mutation did not break the suite; fix the fixtures before a real run.`,
+    );
+    lines.push('');
+  }
+
   // --- Failures ----------------------------------------------------------------
-  const failures = results.filter((r) => !r.passed);
+  // "Red as expected" dry-run rows are not failures (they are the OK verdict).
+  const failures = results.filter((r) => !r.passed && r.error !== DRY_RUN_RED_AS_EXPECTED);
   if (failures.length > 0) {
     lines.push('## Failures');
     lines.push('');

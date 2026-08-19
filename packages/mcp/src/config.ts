@@ -58,14 +58,47 @@ export function saveMcpConfig(config: McpConfig, path = defaultMcpConfigPath()):
   return path;
 }
 
-/** Add (or replace) a server by name and persist. Returns the new config. */
+/**
+ * Validate a registration before it is persisted. A typo here (empty name,
+ * spaces in a name, an empty command) silently registers a server that breaks
+ * later at run time — the `guppy mcp add` dogfooding finding. Throw early so
+ * the caller can surface a readable error instead.
+ */
+export function validateMcpServerRegistration(name: string, server: McpServerConfig): void {
+  if (typeof name !== 'string' || name.trim() === '') {
+    throw new Error('MCP server name must not be empty');
+  }
+  // Names are used as config keys and CLI arguments (`guppy mcp remove <name>`
+  // is position-based) — spaces and shell-hostile characters break both.
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) {
+    throw new Error(
+      `Invalid MCP server name "${name}": use letters, digits, dash, underscore, or dot (no spaces)`,
+    );
+  }
+  if (typeof server.command !== 'string' || server.command.trim() === '') {
+    throw new Error(`MCP server "${name}" must have a command (e.g. npx, node, or a path)`);
+  }
+}
+
+/**
+ * Add a server by name and persist. Returns the new config.
+ *
+ * Refuses to silently overwrite an existing name unless `force` is set (the
+ * same rule `guppy skill install` applies): re-adding a name should be an
+ * explicit act, not an accidental clobber.
+ */
 export function addMcpServer(
   name: string,
   server: McpServerConfig,
   path = defaultMcpConfigPath(),
+  options: { force?: boolean } = {},
 ): McpConfig {
+  validateMcpServerRegistration(name, server);
   const config = loadMcpConfig(path);
-  config.mcpServers[name] = server;
+  if (config.mcpServers[name] && !options.force) {
+    throw new Error(`MCP server "${name}" is already registered — pass --force to overwrite it`);
+  }
+  config.mcpServers[name] = { ...server, command: server.command.trim() };
   saveMcpConfig(config, path);
   return config;
 }

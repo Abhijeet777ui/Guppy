@@ -46,11 +46,36 @@ describe('MCP server config', () => {
     expect(loadMcpConfig(path).mcpServers).toEqual({});
   });
 
-  it('replaces an existing server with the same name', () => {
+  it('refuses to silently overwrite an existing server without --force', () => {
     const path = tempConfigPath();
     addMcpServer('s', { command: 'a' }, path);
-    addMcpServer('s', { command: 'b', args: ['--x'] }, path);
+    expect(() => addMcpServer('s', { command: 'b' }, path)).toThrow(/already registered/);
+    // The original server is untouched by the refused overwrite.
+    expect(loadMcpConfig(path).mcpServers['s']).toEqual({ command: 'a' });
+  });
+
+  it('replaces an existing server when force is set', () => {
+    const path = tempConfigPath();
+    addMcpServer('s', { command: 'a' }, path);
+    addMcpServer('s', { command: 'b', args: ['--x'] }, path, { force: true });
     expect(loadMcpConfig(path).mcpServers['s']).toEqual({ command: 'b', args: ['--x'] });
+  });
+
+  it('rejects an empty or space-containing server name', () => {
+    const path = tempConfigPath();
+    expect(() => addMcpServer('', { command: 'a' }, path)).toThrow(/name must not be empty/);
+    expect(() => addMcpServer('  ', { command: 'a' }, path)).toThrow(/name must not be empty/);
+    expect(() => addMcpServer('my server', { command: 'a' }, path)).toThrow(/Invalid MCP server name/);
+    expect(() => addMcpServer('a;rm -rf', { command: 'a' }, path)).toThrow(/Invalid MCP server name/);
+    expect(loadMcpConfig(path).mcpServers).toEqual({});
+  });
+
+  it('rejects an empty command and trims the stored one', () => {
+    const path = tempConfigPath();
+    expect(() => addMcpServer('s', { command: '' }, path)).toThrow(/must have a command/);
+    expect(() => addMcpServer('s', { command: '   ' }, path)).toThrow(/must have a command/);
+    addMcpServer('s', { command: '  npx  ' }, path);
+    expect(loadMcpConfig(path).mcpServers['s']).toEqual({ command: 'npx' });
   });
 
   it('keeps unrelated servers when removing one', () => {

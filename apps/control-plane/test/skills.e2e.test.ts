@@ -279,6 +279,13 @@ describe('repo skills (SessionManager → context → gate)', () => {
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.value.outcome).toBe('failure');
+      // The run summary needs to know the gate is why it failed: the verdict
+      // is false and the gate's messages ride along (no more "Tests passed:
+      // 0" mystery line).
+      expect(result.value.lastGatePassed).toBe(false);
+      expect(Array.isArray(result.value.gateErrors)).toBe(true);
+      expect(result.value.gateErrors!.length).toBeGreaterThan(0);
+      expect(result.value.gateErrors!.join(' ')).toContain('clamp');
     } finally {
       await close(mock.server);
     }

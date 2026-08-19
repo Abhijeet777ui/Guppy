@@ -1,7 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { OpenAIChatClient, RateLimiter, type ChatMessage, type ToolDefinition } from '../src/index.js';
+import {
+  OpenAIChatClient,
+  RateLimiter,
+  resolveBaseUrl,
+  type ChatMessage,
+  type ToolDefinition,
+} from '../src/index.js';
 
 interface CapturedRequest {
   body: Record<string, unknown>;
@@ -719,5 +725,23 @@ describe('RateLimiter', () => {
     await limiter.acquire('fake|http://x/v1', undefined);
     await limiter.acquire('fake|http://x/v1', 0);
     expect(Date.now() - startedAt).toBeLessThan(100);
+  });
+});
+
+describe('resolveBaseUrl — provider base-URL mapping', () => {
+  it('maps known providers to their OpenAI-compatible endpoints', () => {
+    expect(resolveBaseUrl({ provider: 'openrouter', model: 'x' })).toBe('https://openrouter.ai/api/v1');
+    expect(resolveBaseUrl({ provider: 'groq', model: 'x' })).toBe('https://api.groq.com/openai/v1');
+    expect(resolveBaseUrl({ provider: 'nvidia', model: 'x' })).toBe('https://integrate.api.nvidia.com/v1');
+  });
+
+  it('an explicit baseUrl always wins over the provider map', () => {
+    expect(resolveBaseUrl({ provider: 'openrouter', model: 'x', baseUrl: 'http://127.0.0.1:9999/v1/' })).toBe(
+      'http://127.0.0.1:9999/v1',
+    );
+  });
+
+  it('unknown providers fall back to the OpenAI default', () => {
+    expect(resolveBaseUrl({ provider: 'mystery', model: 'x' })).toBe('https://api.openai.com/v1');
   });
 });

@@ -421,7 +421,7 @@ async function runPrimeRaw(
       ...base,
       passed: false,
       attempts: [],
-      error: gate.passed ? 'dry-run: fixture unexpectedly green' : 'dry-run: fixture red as expected',
+      error: gate.passed ? DRY_RUN_UNEXPECTEDLY_GREEN : DRY_RUN_RED_AS_EXPECTED,
     };
   }
 
@@ -555,7 +555,7 @@ async function runGuppyWrapped(
       ...base,
       passed: false,
       attempts: [],
-      error: gate.passed ? 'dry-run: fixture unexpectedly green' : 'dry-run: fixture red as expected',
+      error: gate.passed ? DRY_RUN_UNEXPECTEDLY_GREEN : DRY_RUN_RED_AS_EXPECTED,
     };
   }
 
@@ -794,6 +794,16 @@ async function runGuppyWrapped(
 // Orchestration
 // ---------------------------------------------------------------------------
 
+/**
+ * Dry-run result markers (carried on `TaskRunResult.error`, which is otherwise
+ * empty for dry runs). A dry-run's job is to prove the *fixture* works: the
+ * mutated repo must keep the suite red. "Red as expected" is the OK verdict;
+ * "unexpectedly green" means the fixture is broken. The CLI/report render
+ * these without the FAIL/passed vocabulary used for real runs.
+ */
+export const DRY_RUN_RED_AS_EXPECTED = 'dry-run: fixture red as expected';
+export const DRY_RUN_UNEXPECTEDLY_GREEN = 'dry-run: fixture unexpectedly green';
+
 export async function runSingle(
   config: BenchConfigKind,
   spec: BenchTaskSpec,
@@ -830,10 +840,16 @@ export async function runBench(options: BenchOptions): Promise<TaskRunResult[]> 
       try {
         const result = await runSingle(config, spec, opts);
         results.push(result);
+        // Dry-run verdicts are about the fixture, not the agent: "red as
+        // expected" is the OK outcome and must not read like a failure.
         console.log(
-          result.passed
-            ? chalk.green(`  PASS ${spec.id} (${result.attempts.length} attempt(s))`)
-            : chalk.red(`  FAIL ${spec.id}: ${(result.error ?? 'unknown').slice(0, 120)}`),
+          options.dryRun
+            ? result.error === DRY_RUN_RED_AS_EXPECTED
+              ? chalk.cyan(`  CHECK ${spec.id}: fixture is red as expected (dry-run OK)`)
+              : chalk.red(`  CHECK ${spec.id}: FAILED — ${(result.error ?? 'unknown').slice(0, 120)}`)
+            : result.passed
+              ? chalk.green(`  PASS ${spec.id} (${result.attempts.length} attempt(s))`)
+              : chalk.red(`  FAIL ${spec.id}: ${(result.error ?? 'unknown').slice(0, 120)}`),
         );
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);

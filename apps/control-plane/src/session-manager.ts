@@ -139,8 +139,11 @@ export class SessionManager {
     if (!this.config.verificationEngine.levelAvailable(baselineLevel)) {
       // A missing tool (e.g. tsc in a dep-free repo) is an environment
       // condition, not an agent fault — skip the baseline rather than letting
-      // `npx tsc` fetch a bogus package from the registry.
-      console.log(`[SessionManager] Baseline gate (level ${baselineLevel}) skipped: tool not installed`);
+      // `npx tsc` fetch a bogus package from the registry. Same wording as the
+      // engine's own skip so the condition never reads two ways.
+      console.log(
+        `[SessionManager] Baseline gate (level ${baselineLevel}) skipped: ${this.config.verificationEngine.levelSkipReason(baselineLevel)}`,
+      );
     } else {
       const baseline = await this.config.verificationEngine.verify(baselineLevel, context, task);
       if (baseline.ok && baseline.value.passed) {
@@ -170,6 +173,7 @@ export class SessionManager {
     // Gated retry loop: the harness decides success, and every failed gate
     // feeds evidence + retrieved past fixes into the next attempt.
     let lastTrajectory: Trajectory | null = null;
+    let lastGateErrors: string[] = [];
     let passed = false;
     try {
       for (let attempt = 1; attempt <= this.config.maxTurns; attempt++) {
@@ -213,6 +217,20 @@ export class SessionManager {
           return ok(lastTrajectory);
         }
 
+        // The model was never reachable (e.g. 429 quota after exhausting
+        // retries): zero successful model calls, zero tool calls. This is an
+        // infrastructure failure, not an agent outcome — running the gate
+        // would escalate verification levels and run the repo's test suite
+        // against a run that produced nothing, then report the gate's red
+        // output as the cause (the run-summary masking dogfooding finding).
+        // Short-circuit so the run fails fast with the real error.
+        if (this.isModelUnreachable(lastTrajectory)) {
+          this.state.status = 'failed';
+          deleteCheckpoint(this.config.repoPath, task.id);
+          await this.teardown('failure');
+          return ok(lastTrajectory);
+        }
+
         // Final verification gate for this attempt
         const gateResult = await this.config.verificationEngine.verifyWithBudget(
           context,
@@ -226,6 +244,7 @@ export class SessionManager {
           break;
         }
 
+        lastGateErrors = gateResult.errors.map((e) => e.message);
         console.log(
           `[SessionManager] Attempt ${attempt}/${this.config.maxTurns} failed the gate: ` +
             gateResult.errors.slice(0, 2).map((e) => e.message).join(' | ').slice(0, 160)
@@ -260,7 +279,12 @@ export class SessionManager {
     // The harness decides success — not the agent's self-reported outcome.
     this.state!.status = 'failed';
     const failedTrajectory: Trajectory = lastTrajectory
-      ? { ...lastTrajectory, outcome: 'failure' }
+      ? {
+          ...lastTrajectory,
+          outcome: 'failure',
+          lastGatePassed: false,
+          ...(lastGateErrors.length > 0 ? { gateErrors: lastGateErrors.slice(0, 5) } : {}),
+        }
       : this.emptyTrajectory(task, context.sessionId);
     this.state!.trajectory = failedTrajectory;
     deleteCheckpoint(this.config.repoPath, task.id);
@@ -377,6 +401,7 @@ export class SessionManager {
     let errors: ErrorInfo[] = checkpoint.errors;
     let memories: Memory[] = checkpoint.memories;
     let lastTrajectory: Trajectory | null = null;
+    let lastGateErrors: string[] = [];
     let passed = false;
 
     try {
@@ -421,6 +446,16 @@ export class SessionManager {
           return ok(lastTrajectory);
         }
 
+        // Same short-circuit as the first attempt loop: a failure with zero
+        // model tokens / tool calls is an unreachable model (429, bad key),
+        // not an agent outcome — don't burn the gate on it.
+        if (this.isModelUnreachable(lastTrajectory)) {
+          this.state.status = 'failed';
+          deleteCheckpoint(this.config.repoPath, task.id);
+          await this.teardown('failure');
+          return ok(lastTrajectory);
+        }
+
         const gateResult = await this.config.verificationEngine.verifyWithBudget(
           context,
           task,
@@ -433,6 +468,7 @@ export class SessionManager {
           break;
         }
 
+        lastGateErrors = gateResult.errors.map((e) => e.message);
         console.log(
           `[SessionManager] Attempt ${attempt}/${this.config.maxTurns} failed the gate: ` +
             gateResult.errors.slice(0, 2).map((e) => e.message).join(' | ').slice(0, 160),
@@ -464,12 +500,32 @@ export class SessionManager {
 
     this.state!.status = 'failed';
     const failedTrajectory: Trajectory = lastTrajectory
-      ? { ...lastTrajectory, outcome: 'failure' }
+      ? {
+          ...lastTrajectory,
+          outcome: 'failure',
+          lastGatePassed: false,
+          ...(lastGateErrors.length > 0 ? { gateErrors: lastGateErrors.slice(0, 5) } : {}),
+        }
       : this.emptyTrajectory(task, context.sessionId);
     this.state!.trajectory = failedTrajectory;
     deleteCheckpoint(this.config.repoPath, task.id);
     await this.teardown('failure');
     return ok(failedTrajectory);
+  }
+
+  /**
+   * True when a failure trajectory means the model was never reachable (e.g.
+   * a 429 rate limit after retries, or a bad key): no successful model call
+   * (0 tokens) and no tool call ever ran. Same rule the bench runner applies
+   * for its loud-failure path.
+   */
+  private isModelUnreachable(trajectory: Trajectory): boolean {
+    return (
+      trajectory.outcome === 'failure' &&
+      !!trajectory.error &&
+      trajectory.metrics.tokensTotal === 0 &&
+      trajectory.metrics.toolCalls === 0
+    );
   }
 
   /** Minimal empty trajectory used when a run fails before any attempt. */
