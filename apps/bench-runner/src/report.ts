@@ -115,6 +115,40 @@ export function renderReport(results: TaskRunResult[], options: BenchOptions): s
   }
   lines.push('');
 
+  // --- Skill impact A/B (guppy-core vs guppy-core-skill) ---------------------
+  const skillBaseline = results.filter((r) => r.config === 'guppy-core');
+  const skillTreatment = results.filter((r) => r.config === 'guppy-core-skill');
+  if (skillBaseline.length > 0 && skillTreatment.length > 0) {
+    const b = summarize(results, 'guppy-core');
+    const t = summarize(results, 'guppy-core-skill');
+    lines.push('## Skill impact A/B (guppy-core vs guppy-core-skill)');
+    lines.push('');
+    lines.push('| Task | No skills | Skills | Delta |');
+    lines.push('|---|---|---|---|');
+    for (const taskId of taskIds) {
+      const base = skillBaseline.find((r) => r.taskId === taskId);
+      const treat = skillTreatment.find((r) => r.taskId === taskId);
+      const delta =
+        !base || !treat
+          ? '-'
+          : treat.passed === base.passed
+            ? 'same'
+            : treat.passed
+              ? '+1 (skill helped)'
+              : '-1 (skill hurt)';
+      lines.push(`| ${taskId} | ${base ? (base.passed ? 'PASS' : 'FAIL') : '-'} | ${treat ? (treat.passed ? 'PASS' : 'FAIL') : '-'} | ${delta} |`);
+    }
+    const deltaPp = (t.passRate - b.passRate) * 100;
+    const tokenDelta = t.tokensTotal - b.tokensTotal;
+    lines.push('');
+    lines.push(
+      `- Pass rate: ${(b.passRate * 100).toFixed(0)}% → ${(t.passRate * 100).toFixed(0)}% (${deltaPp >= 0 ? '+' : ''}${deltaPp.toFixed(0)}pp)`,
+    );
+    lines.push(`- Tokens: ${b.tokensTotal} → ${t.tokensTotal} (${tokenDelta >= 0 ? '+' : ''}${tokenDelta})`);
+    lines.push(`- Injected skills dir: ${options.skillsDir ?? '(installed per-user skills)'}`);
+    lines.push('');
+  }
+
   // --- Context health ---------------------------------------------------------
   const CI_RANK: Record<string, number> = { PASS: 0, WARN: 1, FAIL: 2, UNKNOWN: 3 };
   const healthRows = configs

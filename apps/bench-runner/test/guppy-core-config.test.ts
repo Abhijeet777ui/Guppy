@@ -51,6 +51,35 @@ describe('guppy-core bench config', () => {
   });
 });
 
+describe('guppy-core-skill bench config', () => {
+  it('routes to the core runtime (not prime) — skills swap, engine stays the same', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'guppy-bench-skillcfg-'));
+    tmpDirs.push(dir);
+
+    // Against an unreachable endpoint the CORE runtime fails with a loud
+    // model-client error; the prime runtime would fail with a spawn error.
+    // This pins the routing: `guppy-core-skill` is guppy-core + injected
+    // skills, never the prime baseline (a regression that silently turned
+    // the A/B into core-vs-prime).
+    const result = await runSingle('guppy-core-skill', getTask('bugfix-clamp')!, {
+      outDir: join(dir, 'out'),
+      configs: ['guppy-core-skill'],
+      model: 'fake/model',
+      baseUrl: 'http://127.0.0.1:9',
+      apiKey: 'fake',
+      maxRetries: 0,
+      maxAttempts: 3,
+      attemptTimeoutMs: 10_000,
+      dryRun: false,
+    });
+
+    expect(result.config).toBe('guppy-core-skill');
+    expect(result.passed).toBe(false);
+    expect(result.attempts).toHaveLength(1);
+    expect(result.error).toContain('Model request failed');
+  });
+});
+
 describe('coreModelConfig', () => {
   const base: BenchOptions = {
     outDir: 'x',

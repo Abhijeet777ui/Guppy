@@ -23,6 +23,7 @@
     "@guppy/context-engine": "workspace:*",
     "@guppy/verification-engine": "workspace:*",
     "@guppy/memory": "workspace:*",
+    "@guppy/skills": "workspace:*",
     "@guppy/sleep-cycle": "workspace:*",
     "@earendil-works/pi-ai": "^0.84.1",
     "commander": "^12.0.0",

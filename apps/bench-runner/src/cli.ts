@@ -23,7 +23,9 @@ import {
 import { writeReport } from './report.js';
 import { attachContextHealth } from './context-health.js';
 import { runCloseLoopDemo } from './loop-demo.js';
+import { runSkillDemo } from './skill-demo.js';
 import { runSleepCycle } from '@guppy/sleep-cycle';
+import { defaultSkillsDir } from '@guppy/skills';
 
 const program = new Command();
 
@@ -99,6 +101,7 @@ program
   .option('--retry-base-delay <ms>', 'Initial backoff delay in ms for guppy-core')
   .option('--retry-max-delay <ms>', 'Max single backoff delay in ms for guppy-core')
   .option('--rpm <n>', 'Client-side rate limit (requests/minute) for guppy-core; 0 = off')
+  .option('--skills <dir>', 'Skills dir injected into every task for the guppy-core-skill config (default: the installed per-user skills dir)')
   .option('--dry-run', 'Materialize fixtures and gate them; never invoke an LLM', false)
   .option('--contextops-python <path>', 'Python interpreter for ContextOps context-health scoring', 'python')
   .action(async (options: Record<string, string | boolean>) => {
@@ -146,6 +149,9 @@ program
       ...(typeof options['contextopsPython'] === 'string' && options['contextopsPython'] !== ''
         ? { contextOpsPython: String(options['contextopsPython']) }
         : {}),
+      ...(typeof options['skills'] === 'string' && options['skills'] !== ''
+        ? { skillsDir: resolve(String(options['skills'])) }
+        : {}),
     };
 
     const tasks = selectTasks(benchOptions.taskFilter);
@@ -163,6 +169,9 @@ program
     );
     if (benchOptions.requestsPerMinute) {
       console.log(chalk.gray(`  Rate limit (guppy-core): ${benchOptions.requestsPerMinute} req/min`));
+    }
+    if (benchOptions.configs.includes('guppy-core-skill')) {
+      console.log(chalk.gray(`  Skills (guppy-core-skill): ${benchOptions.skillsDir ?? defaultSkillsDir()}`));
     }
     if (benchOptions.dryRun) {
       console.log(chalk.yellow('  Mode:     dry-run (no LLM calls)'));
@@ -218,6 +227,36 @@ program
     console.log(chalk.gray(`  event evidence: ${JSON.stringify(report.eventCounts)}`));
     console.log('');
     console.log(report.passed ? chalk.green.bold('CLOSE-THE-LOOP DEMO PASSED') : chalk.red.bold('CLOSE-THE-LOOP DEMO FAILED'));
+    if (!report.passed) {
+      process.exitCode = 1;
+    }
+  });
+
+program
+  .command('skill-demo')
+  .description('Deterministic skill-impact demo: the same fixture with vs without a skill in context')
+  .option('--task <id>', 'Bench task to run the demo on', 'bugfix-clamp')
+  .option('--out <dir>', 'Output directory', '.guppy/bench/skill-demo')
+  .action(async (options: { task: string; out: string }) => {
+    const outDir = resolve(options.out);
+    console.log(chalk.bold('Guppy skill-impact demo'));
+    console.log(chalk.gray(`  Task: ${options.task}`));
+    console.log(chalk.gray(`  Out:  ${outDir}\n`));
+
+    const report = await runSkillDemo({ outDir, taskId: options.task });
+
+    const run = (label: string, r: { gatePassed: boolean; suiteGreen: boolean; skillInContext: boolean }): string =>
+      `  ${label}: gate=${r.gatePassed ? chalk.green('PASS') : chalk.red('FAIL')} ` +
+      `suite=${r.suiteGreen ? chalk.green('green') : chalk.red('red')} ` +
+      `skill-in-context=${r.skillInContext ? chalk.green('yes') : chalk.red('no')}`;
+    console.log(run('no skill (baseline) ', report.runANoSkill));
+    console.log(run('with skill (treated)', report.runBWithSkill));
+    console.log('');
+    console.log(
+      report.passed
+        ? chalk.green.bold('SKILL-IMPACT DEMO PASSED — the skill in context flipped the gate')
+        : chalk.red.bold('SKILL-IMPACT DEMO FAILED'),
+    );
     if (!report.passed) {
       process.exitCode = 1;
     }

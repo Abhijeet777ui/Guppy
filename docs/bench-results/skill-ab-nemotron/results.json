@@ -1,0 +1,196 @@
+{
+  "generatedAt": "2026-08-19T10:27:58.461Z",
+  "model": "nvidia/nemotron-3-super-120b-a12b:free",
+  "configs": [
+    "guppy-core",
+    "guppy-core-skill"
+  ],
+  "maxAttempts": 2,
+  "retry": {
+    "maxRetries": 2,
+    "baseDelayMs": 500,
+    "maxDelayMs": 30000
+  },
+  "results": [
+    {
+      "config": "guppy-core",
+      "taskId": "bugfix-clamp",
+      "kind": "bugfix",
+      "wallTimeMs": 38656,
+      "tokensTotal": 25223,
+      "toolCalls": 6,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\apps\\bench-runner\\.guppy\\bench\\skill-ab-20260819-112346\\fixtures\\guppy-core\\bugfix-clamp",
+      "passed": true,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 38535,
+          "tokens": 25223,
+          "toolCalls": 6,
+          "verified": true
+        }
+      ],
+      "contextHealth": {
+        "files": 7,
+        "scoreMin": 72,
+        "scoreMax": 86,
+        "scoreAvg": 82.4,
+        "ciStatus": "WARN",
+        "totalTokens": 18151,
+        "wastedTokens": 155,
+        "tokensSaved": 155,
+        "tool": "contextops@0.1.0"
+      }
+    },
+    {
+      "config": "guppy-core",
+      "taskId": "bugfix-sum",
+      "kind": "bugfix",
+      "wallTimeMs": 45942,
+      "tokensTotal": 39557,
+      "toolCalls": 9,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\apps\\bench-runner\\.guppy\\bench\\skill-ab-20260819-112346\\fixtures\\guppy-core\\bugfix-sum",
+      "passed": true,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 45830,
+          "tokens": 39557,
+          "toolCalls": 9,
+          "verified": true
+        }
+      ],
+      "contextHealth": {
+        "files": 10,
+        "scoreMin": 74,
+        "scoreMax": 90,
+        "scoreAvg": 86.1,
+        "ciStatus": "WARN",
+        "totalTokens": 28605,
+        "wastedTokens": 367,
+        "tokensSaved": 369,
+        "tool": "contextops@0.1.0"
+      }
+    },
+    {
+      "config": "guppy-core",
+      "taskId": "bugfix-average",
+      "kind": "bugfix",
+      "wallTimeMs": 13964,
+      "tokensTotal": 16769,
+      "toolCalls": 4,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\apps\\bench-runner\\.guppy\\bench\\skill-ab-20260819-112346\\fixtures\\guppy-core\\bugfix-average",
+      "passed": true,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 13858,
+          "tokens": 16769,
+          "toolCalls": 4,
+          "verified": true
+        }
+      ],
+      "contextHealth": {
+        "files": 5,
+        "scoreMin": 72,
+        "scoreMax": 86,
+        "scoreAvg": 81.8,
+        "ciStatus": "WARN",
+        "totalTokens": 12597,
+        "wastedTokens": 57,
+        "tokensSaved": 56,
+        "tool": "contextops@0.1.0"
+      }
+    },
+    {
+      "config": "guppy-core-skill",
+      "taskId": "bugfix-clamp",
+      "kind": "bugfix",
+      "wallTimeMs": 22080,
+      "tokensTotal": 25881,
+      "toolCalls": 6,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\apps\\bench-runner\\.guppy\\bench\\skill-ab-20260819-112346\\fixtures\\guppy-core-skill\\bugfix-clamp",
+      "passed": true,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 21984,
+          "tokens": 25881,
+          "toolCalls": 6,
+          "verified": true
+        }
+      ],
+      "contextHealth": {
+        "files": 7,
+        "scoreMin": 72,
+        "scoreMax": 86,
+        "scoreAvg": 82.3,
+        "ciStatus": "WARN",
+        "totalTokens": 19377,
+        "wastedTokens": 137,
+        "tokensSaved": 139,
+        "tool": "contextops@0.1.0"
+      }
+    },
+    {
+      "config": "guppy-core-skill",
+      "taskId": "bugfix-sum",
+      "kind": "bugfix",
+      "wallTimeMs": 26641,
+      "tokensTotal": 38990,
+      "toolCalls": 8,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\apps\\bench-runner\\.guppy\\bench\\skill-ab-20260819-112346\\fixtures\\guppy-core-skill\\bugfix-sum",
+      "passed": true,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 26543,
+          "tokens": 38990,
+          "toolCalls": 8,
+          "verified": true
+        }
+      ],
+      "contextHealth": {
+        "files": 9,
+        "scoreMin": 73,
+        "scoreMax": 90,
+        "scoreAvg": 85.1,
+        "ciStatus": "WARN",
+        "totalTokens": 29917,
+        "wastedTokens": 587,
+        "tokensSaved": 588,
+        "tool": "contextops@0.1.0"
+      }
+    },
+    {
+      "config": "guppy-core-skill",
+      "taskId": "bugfix-average",
+      "kind": "bugfix",
+      "wallTimeMs": 24156,
+      "tokensTotal": 26572,
+      "toolCalls": 6,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\apps\\bench-runner\\.guppy\\bench\\skill-ab-20260819-112346\\fixtures\\guppy-core-skill\\bugfix-average",
+      "passed": true,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 24048,
+          "tokens": 26572,
+          "toolCalls": 6,
+          "verified": true
+        }
+      ],
+      "contextHealth": {
+        "files": 7,
+        "scoreMin": 72,
+        "scoreMax": 85,
+        "scoreAvg": 82,
+        "ciStatus": "WARN",
+        "totalTokens": 19810,
+        "wastedTokens": 361,
+        "tokensSaved": 362,
+        "tool": "contextops@0.1.0"
+      }
+    }
+  ]
+}

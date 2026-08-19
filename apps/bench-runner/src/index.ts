@@ -7,5 +7,6 @@ export * from './fixtures.js';
 export * from './runner.js';
 export * from './report.js';
 export * from './loop-demo.js';
+export * from './skill-demo.js';
 export * from './datasets.js';
 export * from './context-health.js';

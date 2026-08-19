@@ -10,6 +10,10 @@
  *  - guppy-pi:   same loop, but the in-process PiAgentRuntime drives the work.
  *  - guppy-core: same loop, driven by Guppy's own in-process agent core
  *                (no pi, no prime) via an OpenAI-compatible endpoint.
+ *  - guppy-core-skill: identical to guppy-core, but the context engine
+ *                receives skills from `--skills <dir>` (default: the
+ *                installed per-user skills). The A/B pair is
+ *                `guppy-core` (no skills) vs `guppy-core-skill` (skills).
  *
  * Ground truth for all configs: `node --test test/` exit code in the
  * workspace the agent edited, plus the task's optional finalCheck.
@@ -39,6 +43,7 @@ import { createEventStore } from '@guppy/event-store';
 import { createMemoryStore, type MemoryStore } from '@guppy/memory';
 import { createWorkspaceManager } from '@guppy/workspace';
 import { ContextEngine, loadSkills } from '@guppy/context-engine';
+import { defaultSkillsDir } from '@guppy/skills';
 import { createVerificationEngine } from '@guppy/verification-engine';
 import {
   createPrimeDaemonRuntime,
@@ -90,9 +95,20 @@ export function resolvePrimeBinary(): string {
 // Types
 // ---------------------------------------------------------------------------
 
-export type BenchConfigKind = 'prime-raw' | 'guppy-prime' | 'guppy-pi' | 'guppy-core';
+export type BenchConfigKind =
+  | 'prime-raw'
+  | 'guppy-prime'
+  | 'guppy-pi'
+  | 'guppy-core'
+  | 'guppy-core-skill';
 
-export const ALL_CONFIGS: BenchConfigKind[] = ['prime-raw', 'guppy-prime', 'guppy-pi', 'guppy-core'];
+export const ALL_CONFIGS: BenchConfigKind[] = [
+  'prime-raw',
+  'guppy-prime',
+  'guppy-pi',
+  'guppy-core',
+  'guppy-core-skill',
+];
 
 export interface BenchOptions {
   outDir: string;
@@ -126,6 +142,12 @@ export interface BenchOptions {
   dryRun: boolean;
   /** Shared memory store (one per bench run) for the learning loop. */
   memory?: MemoryStore;
+  /**
+   * Skills dir injected into every task for the `guppy-core-skill` config
+   * (default: the installed per-user skills dir). The A/B baseline is
+   * `guppy-core` (no injected skills) vs `guppy-core-skill`.
+   */
+  skillsDir?: string;
   /** Explicit task list (dataset imports). Overrides taskFilter. */
   tasks?: BenchTaskSpec[];
   /** Python interpreter used to run ContextOps context-health scoring. */
@@ -271,6 +293,14 @@ export function readWorktreeFiles(dir: string): FileContent[] {
 
   walk(dir, '');
   return files;
+}
+
+/**
+ * Skills the `guppy-core-skill` config injects into every task's context.
+ * Falls back to the installed per-user skills dir (the Slice 5 default).
+ */
+export function resolveBenchSkillsDir(options: BenchOptions): string {
+  return options.skillsDir ?? defaultSkillsDir();
 }
 
 /** Build the feedback fed into the next attempt after a failed gate. */
@@ -472,7 +502,7 @@ async function runGuppyWrapped(
           defaultModel: createDefaultModel(options.model),
           maxTurns: 30,
         })
-      : config === 'guppy-core'
+      : config === 'guppy-core' || config === 'guppy-core-skill'
         ? createCoreRuntime({
             eventStore,
             workspaceManager,
@@ -538,7 +568,12 @@ async function runGuppyWrapped(
         testResults,
         errors,
         memories,
-        skills: loadSkills(join(fixtureDir, '.guppy', 'skills')),
+        // The skill A/B: `guppy-core-skill` swaps the (empty) fixture skills
+        // for the injected skills dir — literally "skills vs none".
+        skills:
+          config === 'guppy-core-skill'
+            ? loadSkills(resolveBenchSkillsDir(options))
+            : loadSkills(join(fixtureDir, '.guppy', 'skills')),
         ...(previousContext ? { previousContext } : {}),
       });
       if (!ctxResult.ok) {
