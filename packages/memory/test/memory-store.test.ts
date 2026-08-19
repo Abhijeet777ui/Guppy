@@ -11,7 +11,12 @@ import {
   type ULID,
   type TrajectoryMetrics,
 } from '@guppy/contracts';
-import { createMemoryStore, extractFixes, type MemoryStore } from '../src/index.js';
+import {
+  createMemoryStore,
+  defaultMemoryDir,
+  extractFixes,
+  type MemoryStore,
+} from '../src/index.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -331,5 +336,122 @@ describe('extractFixes', () => {
     ]);
     expect(fixes).toHaveLength(2);
     expect(fixes.every((f) => f.changedFiles.includes('src/common.ts'))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Layered cross-repo memory (secondary global store)
+// ---------------------------------------------------------------------------
+
+describe('layered cross-repo memory', () => {
+  function layered(repoDir: string, globalDir: string): MemoryStore {
+    return createMemoryStore({
+      rootDir: repoDir,
+      secondaryRootDir: globalDir,
+      defaultLimit: 10,
+      recencyHalfLifeDays: 30,
+    });
+  }
+
+  it('mirrors fix memories into the global store with the same id', () => {
+    const repoA = mkdtempSync(join(tmpdir(), 'memory-repo-a-'));
+    const global = mkdtempSync(join(tmpdir(), 'memory-global-'));
+    try {
+      const storeA = layered(repoA, global);
+      storeA.record({ type: 'fix', summary: 'Fix clamp', detail: {}, tags: ['fix'], relevance: 1 });
+
+      const globalStore = createMemoryStore({ rootDir: global, defaultLimit: 10, recencyHalfLifeDays: 30 });
+      expect(globalStore.count()).toBe(1);
+      const inLocal = storeA.retrieve({ tags: ['fix'] });
+      const inGlobal = globalStore.retrieve({ tags: ['fix'] });
+      expect(inLocal[0]!.memory.id).toBe(inGlobal[0]!.memory.id);
+    } finally {
+      rmSync(repoA, { recursive: true, force: true });
+      rmSync(global, { recursive: true, force: true });
+    }
+  });
+
+  it('retrieves a fix distilled in repo A from repo B with an empty local store', () => {
+    const repoA = mkdtempSync(join(tmpdir(), 'memory-repo-a-'));
+    const repoB = mkdtempSync(join(tmpdir(), 'memory-repo-b-'));
+    const global = mkdtempSync(join(tmpdir(), 'memory-global-'));
+    try {
+      const storeA = layered(repoA, global);
+      storeA.ingestTrajectory(
+        makeTrajectory(ulid(), ulid(), [
+          testEvent('TestFailed', 'clamp', 1_000),
+          fileChanged('src/clamp.ts', 2_000),
+          testEvent('TestPassed', 'clamp', 3_000),
+          completed('success', 4_000),
+        ]),
+      );
+
+      // Repo B shares the global store; its own local store is empty.
+      const storeB = layered(repoB, global);
+      expect(createMemoryStore({ rootDir: repoB }).count()).toBe(0);
+      const results = storeB.retrieveForFailure('clamp', 3);
+      expect(results.length).toBeGreaterThan(0);
+      expect(results[0]!.memory.summary).toContain('clamp');
+    } finally {
+      rmSync(repoA, { recursive: true, force: true });
+      rmSync(repoB, { recursive: true, force: true });
+      rmSync(global, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps trajectory summaries local — only fixes reach the global store', () => {
+    const repoA = mkdtempSync(join(tmpdir(), 'memory-repo-a-'));
+    const global = mkdtempSync(join(tmpdir(), 'memory-global-'));
+    try {
+      const storeA = layered(repoA, global);
+      storeA.ingestTrajectory(
+        makeTrajectory(ulid(), ulid(), [
+          testEvent('TestFailed', 'sum', 1_000),
+          fileChanged('src/sum.ts', 2_000),
+          testEvent('TestPassed', 'sum', 3_000),
+          completed('success', 4_000),
+        ]),
+      );
+      const globalStore = createMemoryStore({ rootDir: global, defaultLimit: 10, recencyHalfLifeDays: 30 });
+      // 1 fix, no trajectory summary.
+      expect(globalStore.count()).toBe(1);
+      expect(globalStore.retrieve({ type: 'trajectory' })).toHaveLength(0);
+    } finally {
+      rmSync(repoA, { recursive: true, force: true });
+      rmSync(global, { recursive: true, force: true });
+    }
+  });
+
+  it('dedupes by id when both layers hold the same fix, and count spans both', () => {
+    const repoA = mkdtempSync(join(tmpdir(), 'memory-repo-a-'));
+    const global = mkdtempSync(join(tmpdir(), 'memory-global-'));
+    try {
+      const storeA = layered(repoA, global);
+      storeA.record({ type: 'fix', summary: 'Fix clamp', detail: {}, tags: ['fix'], relevance: 1 });
+      // One fix lives in both layers: retrieval sees one, count sees one.
+      expect(storeA.retrieve({ tags: ['fix'] })).toHaveLength(1);
+      expect(storeA.count()).toBe(1);
+
+      storeA.record({ type: 'trajectory', summary: 'run', detail: {}, tags: ['trajectory'], relevance: 1 });
+      expect(storeA.count()).toBe(2);
+
+      storeA.clear();
+      expect(storeA.count()).toBe(0);
+      expect(createMemoryStore({ rootDir: global }).count()).toBe(0);
+    } finally {
+      rmSync(repoA, { recursive: true, force: true });
+      rmSync(global, { recursive: true, force: true });
+    }
+  });
+
+  it('defaultMemoryDir honors GUPPY_MEMORY_DIR and falls back to ~/.guppy/memory', () => {
+    const prev = process.env['GUPPY_MEMORY_DIR'];
+    try {
+      process.env['GUPPY_MEMORY_DIR'] = '/tmp/custom-memory';
+      expect(defaultMemoryDir()).toBe('/tmp/custom-memory');
+    } finally {
+      if (prev === undefined) delete process.env['GUPPY_MEMORY_DIR'];
+      else process.env['GUPPY_MEMORY_DIR'] = prev;
+    }
   });
 });

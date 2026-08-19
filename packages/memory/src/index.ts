@@ -16,6 +16,7 @@ import type {
 } from '@guppy/contracts';
 import { ulid, now, ok, err } from '@guppy/contracts';
 import { existsSync, mkdirSync, readFileSync, appendFileSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 export interface MemoryStoreConfig {
@@ -24,6 +25,18 @@ export interface MemoryStoreConfig {
   defaultLimit: number;
   /** Half-life in days for recency decay */
   recencyHalfLifeDays: number;
+  /**
+   * Optional per-user global store (e.g. `~/.guppy/memory`) layered under the
+   * primary. `fix` memories are written to both; reads merge both with the
+   * primary winning id collisions — so a fix distilled in one repo is
+   * retrievable in another (the memory counterpart of `~/.guppy/skills`).
+   */
+  secondaryRootDir?: string;
+}
+
+/** Per-user global memory dir; override with `GUPPY_MEMORY_DIR` (hermetic tests, CI). */
+export function defaultMemoryDir(): string {
+  return process.env['GUPPY_MEMORY_DIR'] ?? join(homedir(), '.guppy', 'memory');
 }
 
 export interface MemoryQuery {
@@ -45,10 +58,21 @@ const MEMORY_FILE = 'memories.jsonl';
 export class MemoryStore {
   private config: MemoryStoreConfig;
   private cache: Memory[] | null = null;
+  /** Layered global store for cross-repo `fix` memories (optional). */
+  private secondary: MemoryStore | null = null;
 
   constructor(config: MemoryStoreConfig) {
     this.config = config;
     mkdirSync(config.rootDir, { recursive: true });
+    if (config.secondaryRootDir) {
+      // The secondary never gets its own secondary (no recursion), and it
+      // shares the primary's scoring defaults so merged scores are comparable.
+      this.secondary = new MemoryStore({
+        rootDir: config.secondaryRootDir,
+        defaultLimit: config.defaultLimit,
+        recencyHalfLifeDays: config.recencyHalfLifeDays,
+      });
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -65,6 +89,13 @@ export class MemoryStore {
     try {
       appendFileSync(this.filePath(), JSON.stringify(full) + '\n', 'utf-8');
       if (this.cache) this.cache.push(full);
+      // Fixes are the cross-repo asset: mirror them into the global store
+      // with the same id so a later repo can retrieve them (primary wins on
+      // dedupe). Trajectory summaries stay local — noise across repos.
+      if (full.type === 'fix' && this.secondary) {
+        const mirrored = this.secondary.record(full);
+        if (!mirrored.ok) return err(mirrored.error);
+      }
       return ok(full);
     } catch (e) {
       return err(e instanceof Error ? e : new Error(String(e)));
@@ -116,8 +147,24 @@ export class MemoryStore {
   // Read path
   // ---------------------------------------------------------------------------
 
-  retrieve(query: MemoryQuery = {}): ScoredMemory[] {
+retrieve(query: MemoryQuery = {}): ScoredMemory[] {
     const limit = query.limit ?? this.config.defaultLimit;
+    // Merge this store's candidates with the global store's, deduping by id
+    // (primary wins) so a fix mirrored into both never appears twice.
+    const byId = new Map<string, ScoredMemory>();
+    for (const scored of this.scoreAll(query)) {
+      byId.set(scored.memory.id, scored);
+    }
+    if (this.secondary) {
+      for (const scored of this.secondary.scoreAll(query)) {
+        if (!byId.has(scored.memory.id)) byId.set(scored.memory.id, scored);
+      }
+    }
+    return [...byId.values()].sort((a, b) => b.score - a.score).slice(0, limit);
+  }
+
+  /** Filter + score one store's memories (no limit — the caller merges). */
+  private scoreAll(query: MemoryQuery): ScoredMemory[] {
     const memories = this.loadAll();
     const currentTime = now();
     const halfLifeMs = this.config.recencyHalfLifeDays * 24 * 60 * 60 * 1000;
@@ -149,7 +196,7 @@ export class MemoryStore {
       scored.push({ memory, score });
     }
 
-    return scored.sort((a, b) => b.score - a.score).slice(0, limit);
+    return scored;
   }
 
   /** Convenience for the context engine: memories relevant to current errors */
@@ -162,13 +209,20 @@ export class MemoryStore {
   }
 
   count(): number {
-    return this.loadAll().length;
+    // Unique ids across layers — a fix mirrored into the global store counts once.
+    const ids = new Set<string>();
+    for (const m of this.loadAll()) ids.add(m.id);
+    if (this.secondary) {
+      for (const m of this.secondary.loadAll()) ids.add(m.id);
+    }
+    return ids.size;
   }
 
-  /** Drop all memories (used by tests and the sleep cycle's re-ingest) */
+  /** Drop all memories in both layers (used by tests and re-ingest) */
   clear(): void {
     writeFileSync(this.filePath(), '', 'utf-8');
     this.cache = [];
+    this.secondary?.clear();
   }
 
   private filePath(): string {
