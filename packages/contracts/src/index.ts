@@ -116,7 +116,7 @@ export interface Context {
 export interface AgentRuntime {
   initialize(workspace: Workspace): Promise<void>;
   run(task: Task, context: Context, signal?: AbortSignal): Promise<Result<Trajectory, Error>>;
-  resume(checkpoint: Checkpoint): Promise<Result<Trajectory, Error>>;
+  resume(checkpoint: Checkpoint, signal?: AbortSignal): Promise<Result<Trajectory, Error>>;
   shutdown(): Promise<void>;
 }
 
@@ -180,6 +180,7 @@ export type EventType =
   | 'ContextSelected'
   | 'ModelCalled'
   | 'ModelStreamed'
+  | 'AssistantMessage'
   | 'FinalAnswer'
   | 'ContextCompressed'
   | 'ToolCalled'
@@ -245,6 +246,18 @@ export interface ModelStreamedEvent extends BaseEvent {
   };
 }
 
+export interface AssistantMessageEvent extends BaseEvent {
+  type: 'AssistantMessage';
+  payload: {
+    /** Assistant prose for this turn (null for a pure tool-call turn). */
+    content: string | null;
+    /** Tool calls the assistant requested, with their ids for replay linkage. */
+    toolCalls: Array<{ id: string; name: string; arguments: string }>;
+    /** The ModelCalled callId this message belongs to. */
+    callId: ULID;
+  };
+}
+
 export interface FinalAnswerEvent extends BaseEvent {
   type: 'FinalAnswer';
   payload: {
@@ -286,6 +299,12 @@ export interface ToolReturnedEvent extends BaseEvent {
     result: unknown;
     error?: string;
     duration: number;
+    /**
+     * Id of the assistant tool call this result answers. The event log must
+     * be able to reconstruct the exact model-visible conversation, which
+     * requires linking each tool result back to its tool call.
+     */
+    toolCallId?: string;
   };
 }
 
@@ -352,6 +371,17 @@ export interface AgentMergedEvent extends BaseEvent {
     childSessionId: ULID;
     mergeResult: 'clean' | 'conflict' | 'failed';
     conflicts?: string[];
+    /**
+     * The child's verification-gate outcome — the fold-back gate. `clean`
+     * means the child's changes passed its own gate before being handed back
+     * to the parent; `failed` means the gate stayed red and the parent must
+     * fix or revert the child's work.
+     */
+    gate?: { level: number; passed: boolean; errors: string[]; duration: number };
+    /** Files the child changed in the shared workspace (the fold-back footprint). */
+    filesChanged?: Array<{ path: string; operation: 'create' | 'modify' | 'delete' }>;
+    /** Child budget usage (turns, tokens, tool calls, wall time). */
+    metrics?: TrajectoryMetrics;
   };
 }
 
@@ -406,6 +436,7 @@ export type Event =
   | ContextSelectedEvent
   | ModelCalledEvent
   | ModelStreamedEvent
+  | AssistantMessageEvent
   | FinalAnswerEvent
   | ContextCompressedEvent
   | ToolCalledEvent

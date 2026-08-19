@@ -11,7 +11,7 @@ import type {
 } from '@guppy/contracts';
 import { now, ulid, ok, err } from '@guppy/contracts';
 import Docker from 'dockerode';
-import { createWriteStream, createReadStream, existsSync, mkdirSync, rmSync, cpSync, readdirSync, readFileSync, realpathSync } from 'fs';
+import { createWriteStream, createReadStream, existsSync, mkdirSync, rmSync, cpSync, readdirSync, readFileSync, realpathSync, symlinkSync, statSync } from 'fs';
 import { homedir } from 'os';
 import { join, dirname, basename, relative, resolve, sep } from 'path';
 import { fileURLToPath } from 'url';
@@ -37,6 +37,20 @@ export interface WorkspaceConfig {
    * `guppy run --local`.
    */
   useContainers: boolean;
+  /**
+   * When the source repo has no node_modules but declares dependencies,
+   * install them into the workspace so the verification gate can resolve
+   * the repo's tools (host-side in local mode, inside the sandbox in
+   * container mode — the user's repo is never modified). Repos with an
+   * installed node_modules are linked/mounted instead, never re-installed.
+   * Installation never creates a package-lock.json in the repo (existing
+   * lockfiles are respected and left untouched when in sync); pass
+   * `installDependencies: false` (CLI: `--no-install`) to disable the
+   * fallback entirely.
+   */
+  installDependencies: boolean;
+  /** Timeout for the dependency install step (ms). */
+  installTimeoutMs: number;
 }
 
 export interface ExecResult {
@@ -54,6 +68,33 @@ export interface WorktreeInfo {
   repoPath: string;
 }
 
+/**
+ * Minimal checkpoint view the GC uses to protect resumable crashed runs
+ * (a checkpoint means `guppy run --resume` can still re-attach the
+ * workspace). Provided by the caller (the control plane reads its own
+ * `.guppy/checkpoints/`).
+ */
+export interface GcCheckpoint {
+  workspaceId: string;
+  /** Absolute path of the workspace the checkpoint would resume. */
+  workspacePath: string;
+  /** Epoch ms — when the checkpoint was written. */
+  createdAt: number;
+}
+
+export interface GcArtifact {
+  kind: 'worktree' | 'branch' | 'plain-worktree';
+  branch?: string;
+  path?: string;
+  workspaceId?: string;
+  reason: string;
+}
+
+export interface GcResult {
+  removed: GcArtifact[];
+  kept: GcArtifact[];
+}
+
 const DEFAULT_CONFIG: WorkspaceConfig = {
   dockerImage: 'guppy/executor:latest',
   // Worktrees must live OUTSIDE the source repo: Node's cpSync refuses to
@@ -67,6 +108,8 @@ const DEFAULT_CONFIG: WorkspaceConfig = {
   cpuLimit: 2,
   timeout: 300_000, // 5 minutes
   useContainers: true,
+  installDependencies: true,
+  installTimeoutMs: 600_000, // 10 minutes
 };
 
 export class WorkspaceManager {
@@ -98,6 +141,9 @@ export class WorkspaceManager {
       };
 
       if (!this.config.useContainers) {
+        // Local mode: link the source repo's node_modules into the worktree
+        // (or install when the repo has none) so the gate can resolve tools.
+        await this.prepareDependencies(workspace);
         return ok(workspace);
       }
 
@@ -105,6 +151,11 @@ export class WorkspaceManager {
       const container = await this.startContainer(workspace);
       workspace.containerId = container.id;
       this.activeContainers.set(workspaceId, container);
+
+      // Container mode: node_modules comes from the bind mount in
+      // startContainer; when the source repo has none, install it inside the
+      // sandbox now so `npm test` can resolve the repo's tools.
+      await this.prepareDependencies(workspace);
 
       return ok(workspace);
     } catch (e) {
@@ -167,12 +218,15 @@ export class WorkspaceManager {
         return err(e instanceof Error ? e : new Error(String(e)));
       }
     }
+    // Re-apply the dependency provisioning for resumed worktrees (a worktree
+    // created before node_modules linking may predate it).
+    await this.prepareDependencies(workspace);
     return ok(workspace);
   }
 
   async destroyWorkspace(
     workspaceId: ULID,
-    options: { deleteBranch?: boolean } = {},
+    options: { deleteBranch?: boolean; forceDeleteBranch?: boolean } = {},
   ): Promise<Result<void, Error>> {
     try {
       // Stop container
@@ -189,12 +243,24 @@ export class WorkspaceManager {
         await this.removeWorktree(worktree);
         if (options.deleteBranch && worktree.branch) {
           // Only safe once the worktree is gone (a branch checked out in a
-          // worktree cannot be deleted). Best-effort: a leftover branch is
-          // harmless and preserves the changes if the merge was partial.
+          // worktree cannot be deleted). `-D` when the caller says the branch
+          // was never merged (failed/cancelled runs): it is guppy's scratch
+          // state and the worktree is already gone, so a leftover branch is
+          // pure residue. Failure is logged, never silently swallowed.
           try {
-            await execa('git', ['branch', '-d', worktree.branch], { cwd: worktree.repoPath });
+            const flag = options.forceDeleteBranch ? '-D' : '-d';
+            await execa('git', ['branch', flag, worktree.branch], { cwd: worktree.repoPath });
+          } catch (e) {
+            console.warn(
+              `[Workspace] Could not delete branch ${worktree.branch} after teardown: ${e instanceof Error ? e.message : String(e)}`,
+            );
+          }
+          // Reap stale worktree registrations (crashed runs) that would
+          // otherwise keep blocking branch deletion forever.
+          try {
+            await execa('git', ['worktree', 'prune'], { cwd: worktree.repoPath });
           } catch {
-            // Ignore — keep the branch rather than losing work.
+            // Best-effort.
           }
         }
         this.activeWorktrees.delete(workspaceId);
@@ -204,6 +270,115 @@ export class WorkspaceManager {
     } catch (e) {
       return err(e instanceof Error ? e : new Error(String(e)));
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Dependency provisioning
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Make the repo's dependencies available to the workspace so the
+   * verification gate can actually resolve the repo's tools:
+   *
+   * - Local mode with an installed source repo: junction/symlink the source
+   *   repo's node_modules into the worktree (the copy deliberately strips
+   *   it, and git worktrees only carry tracked files).
+   * - Container mode: node_modules is bind-mounted at /workspace/node_modules
+   *   by startContainer (a host-side symlink would dangle inside the
+   *   container, whose filesystem doesn't contain the host path).
+   * - Source repo with no node_modules but declared deps: install them into
+   *   the workspace (host-side in local mode, inside the sandbox in
+   *   container mode — the user's repo is never modified).
+   */
+  private async prepareDependencies(workspace: Workspace): Promise<void> {
+    const worktreePath = workspace.worktreePath;
+    if (!worktreePath) return;
+    const sourceNodeModules = join(workspace.repoPath, 'node_modules');
+    const worktreeNodeModules = join(worktreePath, 'node_modules');
+
+    if (!this.config.useContainers && existsSync(sourceNodeModules) && !existsSync(worktreeNodeModules)) {
+      this.linkNodeModules(sourceNodeModules, worktreeNodeModules);
+      return;
+    }
+
+    if (existsSync(worktreeNodeModules) || !this.config.installDependencies) return;
+    // Source node_modules exists (mounted in container mode) — the link/mount
+    // path already covers deps; don't re-install.
+    if (existsSync(sourceNodeModules)) return;
+    if (!this.needsInstall(worktreePath)) return;
+
+    const command = buildInstallCommand(worktreePath);
+    console.log(`[Workspace] Installing dependencies in the workspace: ${command.join(' ')}`);
+    const result = this.config.useContainers
+      ? await this.exec(workspace.id, command, { timeout: this.config.installTimeoutMs })
+      : await this.execLocal(workspace.id, command, { timeout: this.config.installTimeoutMs });
+    if (!result.ok) {
+      console.warn(
+        `[Workspace] Dependency install failed (${result.error.message}) — verification levels that need the repo's tools will be skipped`,
+      );
+      return;
+    }
+    if (result.value.exitCode !== 0) {
+      console.warn(`[Workspace] Dependency install exited ${result.value.exitCode}: ${result.value.stderr.slice(0, 400)}`);
+      return;
+    }
+    console.log('[Workspace] Dependencies installed in the workspace');
+  }
+
+  /** Best-effort junction/symlink so the worktree sees the source repo's deps. */
+  private linkNodeModules(source: string, worktreeNodeModules: string): void {
+    try {
+      symlinkSync(source, worktreeNodeModules, process.platform === 'win32' ? 'junction' : 'dir');
+    } catch (e) {
+      // e.g. a platform that forbids symlinks: log and let the availability
+      // guard skip tool levels instead of silently mis-resolving.
+      console.warn(
+        `[Workspace] Could not link node_modules into the worktree (${e instanceof Error ? e.message : String(e)}) — tool levels will be skipped`,
+      );
+    }
+  }
+
+  /** True when the repo declares dependencies or ships a lockfile. */
+  private needsInstall(worktreePath: string): boolean {
+    const pkgPath = join(worktreePath, 'package.json');
+    if (existsSync(pkgPath)) {
+      try {
+        const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8')) as {
+          dependencies?: Record<string, string>;
+          devDependencies?: Record<string, string>;
+        };
+        if (
+          (pkg.dependencies && Object.keys(pkg.dependencies).length > 0) ||
+          (pkg.devDependencies && Object.keys(pkg.devDependencies).length > 0)
+        ) {
+          return true;
+        }
+      } catch {
+        // Malformed package.json — fall through to the lockfile check.
+      }
+    }
+    return (
+      existsSync(join(worktreePath, 'package-lock.json')) ||
+      existsSync(join(worktreePath, 'pnpm-lock.yaml')) ||
+      existsSync(join(worktreePath, 'yarn.lock'))
+    );
+  }
+
+
+
+  /**
+   * Container bind mounts: the worktree at /workspace plus the source repo's
+   * node_modules (read-only — the sandbox sees the repo's deps without being
+   * able to corrupt them; relative symlinks inside npm/pnpm layouts resolve
+   * through the mount).
+   */
+  private buildBinds(worktreePath: string, repoPath: string): string[] {
+    const binds = [`${worktreePath}:/workspace:rw`];
+    const sourceNodeModules = join(repoPath, 'node_modules');
+    if (existsSync(sourceNodeModules) && !existsSync(join(worktreePath, 'node_modules'))) {
+      binds.push(`${sourceNodeModules}:/workspace/node_modules:ro`);
+    }
+    return binds;
   }
 
   // ---------------------------------------------------------------------------
@@ -298,9 +473,16 @@ export class WorkspaceManager {
       // overlay below so the changes land in the repo uncommitted.
       if (info.branch && !options.noCommit) {
         const { stdout } = await execa('git', ['status', '--porcelain'], { cwd: info.path });
-        const filesChanged = stdout.split('\n').filter((l) => l.trim() !== '').length;
+        // The worktree exposes node_modules (symlinked in local mode) purely
+        // so the gate can resolve tools — it is infrastructure, never agent
+        // work, so it must not count toward the change set or land in the
+        // merge commit.
+        const filesChanged = stdout
+          .split('\n')
+          .filter((l) => l.trim() !== '' && !l.includes('node_modules'))
+          .length;
         if (filesChanged > 0) {
-          await execa('git', ['add', '-A'], { cwd: info.path });
+          await execa('git', ['add', '-A', '--', ':!node_modules'], { cwd: info.path });
           await execa(
             'git',
             [
@@ -421,8 +603,8 @@ export class WorkspaceManager {
     }
 
     try {
-      // Commit any pending changes
-      await execa('git', ['add', '-A'], { cwd: worktree.path, stdio: 'pipe' });
+      // Commit any pending changes (never the infra node_modules symlink)
+      await execa('git', ['add', '-A', '--', ':!node_modules'], { cwd: worktree.path, stdio: 'pipe' });
       await execa('git', ['commit', '-m', 'Guppy: auto-commit before merge'], { cwd: worktree.path, stdio: 'pipe' });
 
       // Merge into target
@@ -430,6 +612,254 @@ export class WorkspaceManager {
       await execa('git', ['merge', '--no-ff', worktree.branch], { cwd: worktree.path, stdio: 'pipe' });
 
       return ok(undefined);
+    } catch (e) {
+      return err(e instanceof Error ? e : new Error(String(e)));
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // GC — crashed-run residue cleanup
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Reap guppy residue left by hard crashes (process kill, power loss) where
+   * teardown never ran: orphaned `guppy-*` branches, git worktree
+   * registrations/directories, and plain-copy worktree directories. Normal
+   * failed/cancelled runs never need this — their teardown already cleans up.
+   *
+   * Safety rules (repo-scoped, conservative by default):
+   * - A workspace referenced by a FRESH checkpoint (younger than maxAge) is
+   *   kept — `guppy run --resume` can still re-attach it.
+   * - A git worktree whose directory is younger than maxAge is kept even
+   *   without a checkpoint (a run in its pre-checkpoint window could be
+   *   active).
+   * - The main checkout is never touched, even if a guppy branch is checked
+   *   out there; git worktrees of OTHER repos (they carry a `.git` entry
+   *   under the shared worktree base) are skipped — this GC only cleans this
+   *   repo's artifacts plus un-attributable plain-copy dirs that have aged
+   *   out.
+   * - `force` deletes everything guppy-* regardless of age or checkpoints.
+   *
+   * `dryRun` reports what would be removed without touching anything.
+   */
+  async gc(
+    repoPath: string,
+    options: { checkpoints?: GcCheckpoint[]; force?: boolean; maxAgeDays?: number; dryRun?: boolean } = {},
+  ): Promise<Result<GcResult, Error>> {
+    const maxAgeDays = options.maxAgeDays ?? 7;
+    const maxAgeMs = maxAgeDays * 24 * 60 * 60 * 1000;
+    const nowMs = Date.now();
+    const force = options.force === true;
+    const dryRun = options.dryRun === true;
+    const removed: GcArtifact[] = [];
+    const kept: GcArtifact[] = [];
+    const repoRoot = resolve(repoPath);
+    // Realpath comparison is essential: git's porcelain paths and the caller's
+    // repoPath can use different forms on Windows (8.3 short names, separators,
+    // case), and the main-checkout guard must never misjudge the repo itself.
+    const repoReal = tryRealpath(repoRoot);
+    const checkpoints = options.checkpoints ?? [];
+
+    try {
+      // Index checkpoints by branch prefix (`guppy-<8 hex>`) and by worktree
+      // path so a resumable crash is never swept.
+      const byPrefix = new Map<string, GcCheckpoint>();
+      const byPath = new Map<string, GcCheckpoint>();
+      for (const cp of checkpoints) {
+        byPrefix.set(`guppy-${String(cp.workspaceId).slice(0, 8).toLowerCase()}`, cp);
+        byPath.set(resolve(cp.workspacePath), cp);
+      }
+
+      // Non-empty reason means the artifact is stale; '' means keep.
+      const staleReason = (cp: GcCheckpoint | undefined, dirAgeMs: number | null): string => {
+        if (force) return 'forced';
+        if (cp) {
+          return nowMs - cp.createdAt > maxAgeMs
+            ? `checkpoint older than ${maxAgeDays} day(s)`
+            : '';
+        }
+        if (dirAgeMs === null) return 'no directory and no checkpoint';
+        return dirAgeMs > maxAgeMs ? `no checkpoint and directory older than ${maxAgeDays} day(s)` : '';
+      };
+      const keepReason = (cp: GcCheckpoint | undefined): string =>
+        cp ? 'checkpoint references this workspace (resumable)' : 'younger than max-age (possibly active)';
+      const record = (
+        artifact: Omit<GcArtifact, 'reason'>,
+        reason: string,
+      ): void => {
+        removed.push({ ...artifact, reason: dryRun ? `${reason} (dry-run)` : reason });
+      };
+
+      // 1. Git worktrees + branches (git repos only)
+      if (existsSync(join(repoPath, '.git'))) {
+        const { stdout } = await execa('git', ['worktree', 'list', '--porcelain'], {
+          cwd: repoPath,
+          stdio: 'pipe',
+        });
+        const handledBranches = new Set<string>();
+        for (const wt of parseWorktreeList(stdout)) {
+          if (!wt.branch || !wt.branch.startsWith('guppy-')) continue;
+          handledBranches.add(wt.branch);
+
+          // The main checkout must never be removed, even if the user
+          // checked out a guppy branch there. The reliable signal: the main
+          // checkout's `.git` is a DIRECTORY, while linked worktrees carry a
+          // `.git` FILE pointing at the shared git dir. (Realpath comparison
+          // alone is not enough on Windows — git prints long names while
+          // callers may pass 8.3 short names, which node's realpathSync does
+          // not expand.)
+          let isMainCheckout = false;
+          try {
+            isMainCheckout = statSync(join(wt.path, '.git')).isDirectory();
+          } catch {
+            isMainCheckout = false;
+          }
+          if (isMainCheckout || tryRealpath(wt.path) === repoReal) {
+            kept.push({
+              kind: 'worktree',
+              branch: wt.branch,
+              path: wt.path,
+              reason: 'main checkout — not guppy-owned residue',
+            });
+            continue;
+          }
+
+          const cp = byPrefix.get(wt.branch.toLowerCase()) ?? byPath.get(resolve(wt.path));
+          let dirAgeMs: number | null = null;
+          try {
+            dirAgeMs = nowMs - statSync(wt.path).mtimeMs;
+          } catch {
+            dirAgeMs = null; // registration without a directory — stale
+          }
+          const reason = staleReason(cp, dirAgeMs);
+          if (reason === '') {
+            kept.push({ kind: 'worktree', branch: wt.branch, path: wt.path, reason: keepReason(cp) });
+            continue;
+          }
+
+          if (!dryRun) {
+            try {
+              await execa('git', ['worktree', 'remove', '--force', wt.path], { cwd: repoPath, stdio: 'pipe' });
+            } catch {
+              // Fall through to the directory removal below.
+            }
+            if (existsSync(wt.path) && tryRealpath(wt.path) !== repoReal) {
+              try {
+                rmSync(wt.path, { recursive: true, force: true });
+              } catch {
+                // The directory may be locked; the branch deletion below
+                // will then also fail and the artifact is reported kept.
+              }
+            }
+            try {
+              await execa('git', ['branch', '-D', wt.branch], { cwd: repoPath, stdio: 'pipe' });
+            } catch {
+              // e.g. the branch is still checked out somewhere — report it.
+              kept.push({
+                kind: 'worktree',
+                branch: wt.branch,
+                path: wt.path,
+                reason: 'could not delete (branch still checked out?)',
+              });
+              continue;
+            }
+          }
+          record(
+            { kind: 'worktree', branch: wt.branch, path: wt.path, ...(cp ? { workspaceId: cp.workspaceId } : {}) },
+            reason,
+          );
+        }
+
+        // Branch-only residue: guppy branches with no registered worktree
+        // (pre-cleanup leaks, or a worktree whose deletion left the branch).
+        const { stdout: branchesOut } = await execa('git', ['branch', '--list', 'guppy-*'], {
+          cwd: repoPath,
+          stdio: 'pipe',
+        });
+        for (const raw of branchesOut.split(/\r?\n/)) {
+          const branch = raw.trim().replace(/^\*\s*/, '');
+          if (!branch.startsWith('guppy-') || handledBranches.has(branch)) continue;
+          const cp = byPrefix.get(branch.toLowerCase());
+          // A branch without a worktree cannot belong to an active run
+          // (active runs always have a worktree), so it is stale unless a
+          // fresh checkpoint still points at it.
+          const reason = staleReason(cp, null);
+          if (reason === '') {
+            kept.push({ kind: 'branch', branch, reason: keepReason(cp) });
+            continue;
+          }
+          if (!dryRun) {
+            try {
+              await execa('git', ['branch', '-D', branch], { cwd: repoPath, stdio: 'pipe' });
+            } catch (e) {
+              kept.push({
+                kind: 'branch',
+                branch,
+                reason: `could not delete: ${e instanceof Error ? e.message : String(e)}`,
+              });
+              continue;
+            }
+          }
+          record(
+            { kind: 'branch', branch, ...(cp ? { workspaceId: cp.workspaceId } : {}) },
+            reason,
+          );
+        }
+
+        if (!dryRun) {
+          try {
+            await execa('git', ['worktree', 'prune'], { cwd: repoPath, stdio: 'pipe' });
+          } catch {
+            // Best-effort.
+          }
+        }
+      }
+
+      // 2. Plain-copy worktree directories (non-git repos) under the shared
+      // worktree base. Git worktrees carry a `.git` entry and are handled
+      // above (and belong to their own repos' registrations).
+      let entries: string[] = [];
+      try {
+        entries = readdirSync(this.config.worktreeBase);
+      } catch {
+        entries = [];
+      }
+      const uuidLike = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      for (const name of entries) {
+        const dir = join(this.config.worktreeBase, name);
+        let st: ReturnType<typeof statSync>;
+        try {
+          st = statSync(dir);
+        } catch {
+          continue;
+        }
+        if (!st.isDirectory() || existsSync(join(dir, '.git'))) continue;
+        if (!uuidLike.test(name)) continue;
+        const cp =
+          byPath.get(resolve(dir)) ??
+          (checkpoints.find((c) => String(c.workspaceId) === name) ?? undefined);
+        const reason = staleReason(cp, nowMs - st.mtimeMs);
+        if (reason === '') {
+          kept.push({ kind: 'plain-worktree', workspaceId: name, path: dir, reason: keepReason(cp) });
+          continue;
+        }
+        if (!dryRun) {
+          try {
+            rmSync(dir, { recursive: true, force: true });
+          } catch (e) {
+            kept.push({
+              kind: 'plain-worktree',
+              workspaceId: name,
+              path: dir,
+              reason: `could not delete: ${e instanceof Error ? e.message : String(e)}`,
+            });
+            continue;
+          }
+        }
+        record({ kind: 'plain-worktree', workspaceId: name, path: dir }, reason);
+      }
+
+      return ok({ removed, kept });
     } catch (e) {
       return err(e instanceof Error ? e : new Error(String(e)));
     }
@@ -448,7 +878,7 @@ export class WorkspaceManager {
         Memory: this.parseMemory(this.config.memoryLimit),
         NanoCpus: this.config.cpuLimit * 1_000_000_000,
         NetworkMode: this.config.networkMode,
-        Binds: [`${workspace.worktreePath}:/workspace:rw`],
+        Binds: this.buildBinds(workspace.worktreePath ?? '', workspace.repoPath),
         AutoRemove: false,
       },
       Tty: false,
@@ -882,7 +1312,13 @@ export class WorkspaceManager {
     if (!worktree.branch) return err(new Error('git_status is only available for git repositories'));
     try {
       const result = await execa('git', ['status', '--porcelain'], { cwd: worktree.path, stdio: 'pipe' });
-      return ok(result.stdout.trim() || '(working tree clean)');
+      // Hide the infra node_modules entry (local mode symlinks it into the
+      // worktree for the gate) so the agent sees only real changes.
+      const visible = result.stdout
+        .split('\n')
+        .filter((l) => !l.includes('node_modules'))
+        .join('\n');
+      return ok(visible.trim() || '(working tree clean)');
     } catch (e) {
       return err(e instanceof Error ? e : new Error(String(e)));
     }
@@ -981,7 +1417,7 @@ export class WorkspaceManager {
           Memory: this.parseMemory(this.config.memoryLimit),
           NanoCpus: this.config.cpuLimit * 1_000_000_000,
           NetworkMode: this.config.networkMode,
-          ...(worktree ? { Binds: [`${worktree.path}:/workspace:rw`] } : {}),
+          ...(worktree ? { Binds: this.buildBinds(worktree.path, worktree.repoPath) } : {}),
         },
       });
 
@@ -1038,6 +1474,61 @@ export class WorkspaceManager {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+interface WorktreeListEntry {
+  path: string;
+  branch?: string;
+}
+
+/** Realpath when possible (canonicalizes 8.3 short names on Windows); else resolve. */
+function tryRealpath(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return resolve(p);
+  }
+}
+
+/**
+ * The dependency-install command for a worktree. npm is the one manager both
+ * the host (guppy runs on node) and the executor image guarantee; pnpm/yarn
+ * lockfiles are simply ignored.
+ *
+ * A guppy run must never add files to the repo it didn't author: npm install
+ * would otherwise create a fresh package-lock.json in the worktree, which
+ * merge-back then commits into the user's repo. `--package-lock=false`
+ * suppresses creation when the repo has none. An EXISTING lockfile is
+ * respected (installs stay pinned) and is left untouched when in sync.
+ */
+export function buildInstallCommand(worktreePath: string): string[] {
+  const command = ['npm', 'install', '--no-audit', '--no-fund', '--prefer-offline'];
+  if (!existsSync(join(worktreePath, 'package-lock.json'))) {
+    command.push('--package-lock=false');
+  }
+  return command;
+}
+
+/** Parse `git worktree list --porcelain` into path + branch entries. */
+function parseWorktreeList(output: string): WorktreeListEntry[] {
+  const entries: WorktreeListEntry[] = [];
+  let current: WorktreeListEntry | null = null;
+  for (const line of output.split(/\r?\n/)) {
+    if (line.trim() === '') {
+      if (current) {
+        entries.push(current);
+        current = null;
+      }
+      continue;
+    }
+    if (line.startsWith('worktree ')) {
+      current = { path: line.slice('worktree '.length) };
+    } else if (line.startsWith('branch ')) {
+      if (current) current.branch = line.slice('branch '.length).replace(/^refs\/heads\//, '');
+    }
+  }
+  if (current) entries.push(current);
+  return entries;
+}
 
 /**
  * Split a docker exec's multiplexed stream into stdout/stderr. Each frame is

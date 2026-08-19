@@ -496,7 +496,7 @@ export function runTui(options: ChatOptions, terminal: Terminal = new ProcessTer
       chalk.blue('[Guppy] Chat mode — each message runs the full gated loop (verify → retry → memory).'),
       chalk.gray(`  Repo: ${engine.repoPath}`),
       chalk.gray(
-        `  Runtime: ${options.runtime}  Model: ${options.model}  Verification: ${verificationLevel}  Max turns: ${options.maxTurns}`,
+        `  Model: ${options.model}  Verification: ${verificationLevel}  Max turns: ${options.maxTurns}`,
       ),
       chalk.gray('  Type / for commands, or just describe a task and press Enter.'),
     ];

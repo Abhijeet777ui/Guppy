@@ -52,15 +52,13 @@ describe('guppy-core bench config', () => {
 });
 
 describe('guppy-core-skill bench config', () => {
-  it('routes to the core runtime (not prime) — skills swap, engine stays the same', async () => {
+  it('routes to the core runtime — skills swap, engine stays the same', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'guppy-bench-skillcfg-'));
     tmpDirs.push(dir);
 
-    // Against an unreachable endpoint the CORE runtime fails with a loud
-    // model-client error; the prime runtime would fail with a spawn error.
-    // This pins the routing: `guppy-core-skill` is guppy-core + injected
-    // skills, never the prime baseline (a regression that silently turned
-    // the A/B into core-vs-prime).
+    // Against an unreachable endpoint the core runtime fails with a loud
+    // model-client error. This pins the routing: `guppy-core-skill` is
+    // guppy-core + injected skills — the same engine, skills swapped.
     const result = await runSingle('guppy-core-skill', getTask('bugfix-clamp')!, {
       outDir: join(dir, 'out'),
       configs: ['guppy-core-skill'],

@@ -26,10 +26,18 @@ import type {
 import { err, now, ok, ulid } from '@guppy/contracts';
 import type { EventStore } from '@guppy/event-store';
 import type { WorkspaceManager } from '@guppy/workspace';
-import type { ChatMessage, CompletionResult } from './openai-client.js';
+import type { ChatMessage, CompletionResult, ToolCall } from './openai-client.js';
 import type { ModelConfig } from './model.js';
 import { CancelledError, OpenAIChatClient } from './openai-client.js';
 import { buildGuppyTools, READ_ONLY_TOOL_NAMES, type GuppyTool, type ToolExecution } from './tools.js';
+import {
+  createSubagentBridge,
+  createSubagentTool,
+  DEFAULT_SUBAGENT_CHILD_MAX_TURNS,
+  DEFAULT_SUBAGENT_MAX_DEPTH,
+  DEFAULT_SUBAGENT_VERIFICATION_TIMEOUT_MS,
+  type SubagentBridge,
+} from './subagent.js';
 import {
   COMPRESSED_HISTORY_HEADER,
   compressMessages,
@@ -106,6 +114,23 @@ export interface CoreRuntimeConfig {
    * zero-cost floor.
    */
   historySummarizer?: HistorySummarizerConfig;
+  /**
+   * Enables the recursive `subagent` tool (prime's RLM idea, native): the
+   * model can spawn a child agent on a sub-task with its own event-store
+   * trace, its own turn budget, and its own verification gate, then fold the
+   * result back into this turn. Children share this runtime's workspace, so
+   * their changes are physically present when the tool returns. `maxDepth`
+   * bounds how many levels of children may be spawned (default 3); children
+   * never inherit extra/MCP tools and are hermetic by construction.
+   */
+  subagent?: {
+    /** Max nested child levels below this runtime (default 3; 0 = no tool). */
+    maxDepth?: number;
+    /** Default child turn budget (default 6; a call may lower it, never raise). */
+    childMaxTurns?: number;
+    /** Timeout for the child's verification gate in ms (default 300_000). */
+    childVerificationTimeoutMs?: number;
+  };
 }
 
 const MAX_TOOL_RESULT_CHARS = 20_000;
@@ -115,10 +140,17 @@ export class CoreAgentRuntime implements AgentRuntime {
   private readonly client: OpenAIChatClient;
   private workspace: Workspace | null = null;
   private tools: GuppyTool[] = [];
+  /**
+   * Per-run bridge the subagent tool reads (task/context/signal) and emits
+   * through (AgentForked/AgentMerged land in this trajectory too). Filled in
+   * by run(); a child runtime gets its own bridge.
+   */
+  private readonly subagentBridge: SubagentBridge;
 
   constructor(config: CoreRuntimeConfig) {
     this.config = config;
     this.client = new OpenAIChatClient(config.model);
+    this.subagentBridge = createSubagentBridge();
   }
 
   async initialize(workspace: Workspace): Promise<void> {
@@ -130,6 +162,23 @@ export class CoreAgentRuntime implements AgentRuntime {
       this.tools = native.filter((t) => READ_ONLY_TOOL_NAMES.has(t.name));
     } else {
       this.tools = [...native, ...(this.config.extraTools ?? [])];
+      // Recursive subagent tool (opt-in): children spawn with depth-1, so the
+      // tree terminates at maxDepth. The child gate is the contract.
+      const subagentCfg = this.config.subagent;
+      if (subagentCfg) {
+        const subagent = createSubagentTool({
+          eventStore: this.config.eventStore,
+          workspaceManager: this.config.workspaceManager,
+          model: this.config.model,
+          workspace,
+          maxDepth: subagentCfg.maxDepth ?? DEFAULT_SUBAGENT_MAX_DEPTH,
+          childMaxTurns: subagentCfg.childMaxTurns ?? DEFAULT_SUBAGENT_CHILD_MAX_TURNS,
+          childVerificationTimeoutMs:
+            subagentCfg.childVerificationTimeoutMs ?? DEFAULT_SUBAGENT_VERIFICATION_TIMEOUT_MS,
+          bridge: this.subagentBridge,
+        });
+        if (subagent) this.tools.push(subagent);
+      }
     }
   }
 
@@ -142,8 +191,8 @@ export class CoreAgentRuntime implements AgentRuntime {
       return err(new Error('CoreAgentRuntime.initialize() must be called before run()'));
     }
 
-    const workspaceId = this.workspace.id;
     const sessionId = context.sessionId || ulid();
+    const trajectoryId = ulid();
     const startedAt = now();
     const events: Event[] = [];
     const emit = (event: Event): void => {
@@ -160,22 +209,144 @@ export class CoreAgentRuntime implements AgentRuntime {
       payload: { task },
     });
 
+    // Persist a full-context resume cursor for this attempt so a hard crash
+    // mid-conversation can be resumed at the turn level (best-effort).
+    await this.saveRuntimeCheckpoint(trajectoryId, context, sessionId);
+
     const messages: ChatMessage[] = [
       { role: 'system', content: this.buildSystemPrompt(task, context) },
       { role: 'user', content: task.description },
     ];
 
-    let tokensTotal = 0;
-    let toolCalls = 0;
-    let compressions = 0;
-    const tokensByModel: Record<string, number> = {};
+    return ok(
+      await this.executeLoop({
+        task,
+        context,
+        sessionId,
+        trajectoryId,
+        signal,
+        startedAt,
+        events,
+        emit,
+        messages,
+        startTurn: 0,
+        tokensTotal: 0,
+        tokensByModel: {},
+        toolCalls: 0,
+        compressions: 0,
+      }),
+    );
+  }
+
+  async resume(checkpoint: Checkpoint, signal?: AbortSignal): Promise<Result<Trajectory, Error>> {
+    if (!this.workspace) {
+      return err(new Error('CoreAgentRuntime.initialize() must be called before resume()'));
+    }
+
+    const taskId = checkpoint.taskId;
+    const sessionId = checkpoint.sessionId;
+
+    // Replay the session log to reconstruct the exact model-visible
+    // conversation and the accumulated turn/counter state.
+    const events: Event[] = [];
+    for await (const event of this.config.eventStore.readEvents({ taskId, sessionId, index: 0 })) {
+      events.push(event);
+    }
+
+    if (events.some((e) => e.type === 'TrajectoryCompleted')) {
+      return err(new Error(`Session ${sessionId} already completed; nothing to resume`));
+    }
+
+    const taskStarted = events.find((e) => e.type === 'TaskStarted');
+    const task = taskStarted ? (taskStarted.payload as { task: Task }).task : undefined;
+    if (!task) {
+      return err(new Error(`Session ${sessionId} has no TaskStarted event; cannot resume`));
+    }
+
+    const reconstruction = this.reconstructConversation(events, task, checkpoint.context);
+
+    const trajectoryId = checkpoint.trajectoryId || ulid();
+    const startedAt = events[0]?.timestamp ?? now();
+    const resumeEvents: Event[] = [];
+    const emit = (event: Event): void => {
+      resumeEvents.push(event);
+      this.config.eventStore.append(event);
+    };
+
+    return ok(
+      await this.executeLoop({
+        task,
+        context: checkpoint.context,
+        sessionId,
+        trajectoryId,
+        signal,
+        startedAt,
+        events: resumeEvents,
+        emit,
+        messages: reconstruction.messages,
+        startTurn: reconstruction.turnsCompleted,
+        tokensTotal: reconstruction.tokensTotal,
+        tokensByModel: reconstruction.tokensByModel,
+        toolCalls: reconstruction.toolCalls,
+        compressions: reconstruction.compressions,
+      }),
+    );
+  }
+
+  /**
+   * The shared model↔tool loop. `run()` starts a fresh conversation; `resume()`
+   * continues an interrupted one from a reconstructed message list, turn
+   * offset, and counters. Both funnel through here so the loop, the event
+   * stream, and the trajectory assembly behave identically.
+   */
+  private async executeLoop(params: {
+    task: Task;
+    context: Context;
+    sessionId: ULID;
+    trajectoryId: ULID;
+    signal: AbortSignal | undefined;
+    startedAt: Timestamp;
+    events: Event[];
+    emit: (event: Event) => void;
+    messages: ChatMessage[];
+    startTurn: number;
+    tokensTotal: number;
+    tokensByModel: Record<string, number>;
+    toolCalls: number;
+    compressions: number;
+  }): Promise<Trajectory> {
+    const {
+      task,
+      sessionId,
+      trajectoryId,
+      signal,
+      startedAt,
+      events,
+      emit,
+      messages,
+      startTurn,
+    } = params;
+    const workspaceId = this.workspace!.id;
+    let tokensTotal = params.tokensTotal;
+    let toolCalls = params.toolCalls;
+    let compressions = params.compressions;
+    const tokensByModel: Record<string, number> = { ...params.tokensByModel };
+
+    // Publish this run to the subagent bridge so a spawned child inherits
+    // the parent's abort signal, task, and context (and its AgentForked /
+    // AgentMerged events flow through THIS trajectory's emit).
+    this.subagentBridge.emit = emit;
+    this.subagentBridge.signal = signal ?? null;
+    this.subagentBridge.task = task;
+    this.subagentBridge.context = params.context;
+
     let finished = false;
     let lastError = '';
     let finalAnswer = '';
     let cancelled = false;
 
     try {
-      for (let turn = 0; turn < this.config.maxTurns; turn++) {
+      for (let turn = startTurn; turn < this.config.maxTurns; turn++) {
         // The caller (Ctrl+C in chat) can stop the whole run between turns.
         if (signal?.aborted) {
           cancelled = true;
@@ -265,6 +436,26 @@ export class CoreAgentRuntime implements AgentRuntime {
           tool_calls: completion.toolCalls,
         });
 
+        // Log the model-visible assistant message so resume() can reconstruct
+        // the exact conversation from the event log (the "model-visible ⟺
+        // logged" invariant).
+        emit({
+          id: ulid(),
+          timestamp: now(),
+          type: 'AssistantMessage',
+          taskId: task.id,
+          sessionId,
+          payload: {
+            content: completion.content,
+            toolCalls: completion.toolCalls.map((c) => ({
+              id: c.id,
+              name: c.function.name,
+              arguments: c.function.arguments,
+            })),
+            callId,
+          },
+        });
+
         for (const call of completion.toolCalls) {
           // Don't start a new tool after the caller aborted (Ctrl+C).
           if (signal?.aborted) {
@@ -298,6 +489,7 @@ export class CoreAgentRuntime implements AgentRuntime {
             payload: {
               tool: call.function.name,
               result: truncate(execution.output, MAX_TOOL_RESULT_CHARS),
+              toolCallId: call.id,
               ...(execution.error ? { error: execution.error } : {}),
               duration: Date.now() - toolStart,
             },
@@ -382,8 +574,14 @@ export class CoreAgentRuntime implements AgentRuntime {
       console.log('[CoreAgentRuntime] run cancelled');
     }
 
-    return ok({
-      id: ulid(),
+    // Never leave a stale run's task/context/signal in the bridge.
+    this.subagentBridge.emit = null;
+    this.subagentBridge.signal = null;
+    this.subagentBridge.task = null;
+    this.subagentBridge.context = null;
+
+    return {
+      id: trajectoryId,
       taskId: task.id,
       sessionId,
       events: [...events].sort((a, b) => a.timestamp - b.timestamp),
@@ -393,13 +591,134 @@ export class CoreAgentRuntime implements AgentRuntime {
       completedAt: now(),
       ...(lastError ? { error: lastError } : {}),
       ...(finalAnswer ? { finalAnswer } : {}),
-    });
+    };
   }
 
-  async resume(checkpoint: Checkpoint): Promise<Result<Trajectory, Error>> {
-    return err(
-      new Error(`CoreAgentRuntime.resume() is not implemented yet (checkpoint ${checkpoint.id})`),
-    );
+  /**
+   * Reconstruct the model-visible conversation from a session's events, up to
+   * the last COMPLETE turn (an assistant message whose every tool call has a
+   * returned result). A trailing partial turn — a crash mid-tool-execution —
+   * is dropped rather than replayed, because the model requires a tool result
+   * for every tool call it issued.
+   */
+  private reconstructConversation(
+    events: Event[],
+    task: Task,
+    context: Context,
+  ): {
+    messages: ChatMessage[];
+    turnsCompleted: number;
+    tokensTotal: number;
+    tokensByModel: Record<string, number>;
+    toolCalls: number;
+    compressions: number;
+  } {
+    const messages: ChatMessage[] = [
+      { role: 'system', content: this.buildSystemPrompt(task, context) },
+      { role: 'user', content: task.description },
+    ];
+
+    let turnsCompleted = 0;
+    let tokensTotal = 0;
+    const tokensByModel: Record<string, number> = {};
+    let toolCalls = 0;
+    let compressions = 0;
+
+    // An assistant turn awaiting its tool results (null between turns).
+    let pending: {
+      content: string | null;
+      toolCalls: ToolCall[];
+      results: Map<string, ChatMessage>;
+    } | null = null;
+
+    for (const event of events) {
+      switch (event.type) {
+        case 'ModelCalled': {
+          const p = event.payload as { model: string; promptTokens: number; completionTokens: number };
+          tokensTotal += p.promptTokens + p.completionTokens;
+          tokensByModel[p.model] = (tokensByModel[p.model] ?? 0) + p.promptTokens + p.completionTokens;
+          break;
+        }
+        case 'ContextCompressed': {
+          compressions++;
+          const p = event.payload as { summaryTokens?: number };
+          if (p.summaryTokens) tokensTotal += p.summaryTokens;
+          break;
+        }
+        case 'AssistantMessage': {
+          const p = event.payload as {
+            content: string | null;
+            toolCalls: Array<{ id: string; name: string; arguments: string }>;
+          };
+          if (p.toolCalls.length === 0) break;
+          pending = {
+            content: p.content,
+            toolCalls: p.toolCalls.map((c) => ({
+              id: c.id,
+              function: { name: c.name, arguments: c.arguments },
+            })),
+            results: new Map(),
+          };
+          break;
+        }
+        case 'ToolCalled':
+          toolCalls++;
+          break;
+        case 'ToolReturned': {
+          const p = event.payload as { tool: string; result: unknown; error?: string; toolCallId?: string };
+          if (pending && p.toolCallId) {
+            pending.results.set(p.toolCallId, {
+              role: 'tool',
+              tool_call_id: p.toolCallId,
+              name: p.tool,
+              // Mirrors the loop's exact model-visible tool message. The one
+              // lossy edge is a result already truncated to MAX plus an error
+              // prefix, where re-truncation clips slightly differently.
+              content: truncate(
+                (p.error ? `ERROR: ${p.error}\n` : '') + String(p.result ?? ''),
+                MAX_TOOL_RESULT_CHARS,
+              ),
+            });
+          }
+          break;
+        }
+      }
+
+      // Commit a turn only once every tool call it issued has a result.
+      const p = pending;
+      if (p && p.toolCalls.every((c) => p.results.has(c.id))) {
+        messages.push({ role: 'assistant', content: p.content, tool_calls: p.toolCalls });
+        for (const c of p.toolCalls) {
+          messages.push(p.results.get(c.id)!);
+        }
+        pending = null;
+        turnsCompleted++;
+      }
+    }
+
+    return { messages, turnsCompleted, tokensTotal, tokensByModel, toolCalls, compressions };
+  }
+
+  /**
+   * Persist a resume cursor (a full-context event-store snapshot) so a hard
+   * crash mid-attempt can be resumed at the turn level. Best-effort: a failed
+   * snapshot never breaks the run — attempt-level resume still applies.
+   */
+  private async saveRuntimeCheckpoint(
+    trajectoryId: ULID,
+    context: Context,
+    sessionId: ULID,
+  ): Promise<void> {
+    try {
+      // eventIndex is informational for resume (it reconstructs from the full
+      // session log), so 0 is fine here.
+      const result = await this.config.eventStore.createSnapshot(trajectoryId, 0, context, 'pre_tool');
+      if (!result.ok) {
+        console.warn(`[CoreAgentRuntime] Resume cursor not saved: ${result.error.message}`);
+      }
+    } catch (e) {
+      console.warn(`[CoreAgentRuntime] Resume cursor failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   async shutdown(): Promise<void> {

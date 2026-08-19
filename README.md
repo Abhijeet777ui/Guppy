@@ -36,7 +36,7 @@ pnpm cli -- models --compatible --limit 20
 pnpm cli -- run "fix the failing test"
 ```
 
-See [`docs/STATUS.md`](docs/STATUS.md) for the verified status, capabilities, and bug log; [`docs/LAUNCH_CHECKLIST.md`](docs/LAUNCH_CHECKLIST.md) for the launch roadmap; and [`docs/AUDIT-INSIGHTS.md`](docs/AUDIT-INSIGHTS.md) for the audit trail.
+See [`docs/USER-GUIDE.md`](docs/USER-GUIDE.md) for the full user guide (every command, flag, and workflow); [`docs/FEATURES.md`](docs/FEATURES.md) for the complete feature inventory; [`docs/COMPETITOR-ANALYSIS.md`](docs/COMPETITOR-ANALYSIS.md) for how Guppy compares to the field; [`docs/STATUS.md`](docs/STATUS.md) for the verified status, capabilities, and bug log; [`docs/LAUNCH_CHECKLIST.md`](docs/LAUNCH_CHECKLIST.md) for the launch roadmap; and [`docs/AUDIT-INSIGHTS.md`](docs/AUDIT-INSIGHTS.md) for the audit trail.
 
 ## Repository layout
 

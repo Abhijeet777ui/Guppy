@@ -57,7 +57,7 @@ import {
   type McpBridge,
 } from '@guppy/mcp';
 import { createSessionManager } from './session-manager.js';
-import { latestCheckpoint } from './checkpoint.js';
+import { deleteCheckpoint, latestCheckpoint, listCheckpoints } from './checkpoint.js';
 import { attachLiveStream } from './live-stream.js';
 import { buildAgentRuntime, runChat, type RuntimeOptions } from './chat.js';
 import { runTui } from './tui.js';
@@ -190,7 +190,6 @@ function ensureKeyConfigured(options: CommanderRuntimeOptions): void {
 
 /** Commander option shape shared by `run` and `chat` (runtime-affecting flags). */
 interface CommanderRuntimeOptions {
-  runtime: string;
   model?: string;
   provider?: string;
   baseUrl?: string;
@@ -203,10 +202,10 @@ interface CommanderRuntimeOptions {
   maxTokens?: string;
   modelTimeoutMs?: string;
   stream?: boolean;
-  primeBinary?: string;
-  wsl?: string;
   maxHistoryTokens?: string;
   historySummary?: string;
+  /** commander parses `--no-subagents` as the negation of `subagents`. */
+  noSubagents?: boolean;
   maxTurns: string;
 }
 
@@ -232,7 +231,6 @@ function toRuntimeOptions(options: CommanderRuntimeOptions): RuntimeOptions {
     loadUserConfig(),
   );
   return {
-    runtime: options.runtime,
     model: resolved.model,
     ...(resolved.provider !== undefined ? { provider: resolved.provider } : {}),
     ...(resolved.baseUrl !== undefined ? { baseUrl: resolved.baseUrl } : {}),
@@ -245,12 +243,13 @@ function toRuntimeOptions(options: CommanderRuntimeOptions): RuntimeOptions {
     ...(maxTokens !== undefined ? { maxTokens } : {}),
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     ...(options.stream === false ? { stream: false } : {}),
-    ...(options.primeBinary ? { primeBinary: options.primeBinary } : {}),
-    ...(options.wsl ? { wsl: options.wsl } : {}),
     ...(options.maxHistoryTokens !== undefined
       ? { maxHistoryTokens: optNumber(options.maxHistoryTokens) ?? 60_000 }
       : {}),
     ...(options.historySummary === 'llm' ? { historySummary: true } : {}),
+    // Subagents are on by default; `--no-subagents` disables the recursive
+    // subagent tool (children cost turns/tokens and add gate latency).
+    ...(options.noSubagents === true ? { subagents: false } : {}),
     maxTurns: parseInt(options.maxTurns, 10),
   };
 }
@@ -305,9 +304,7 @@ program
   .option('--no-stream', 'Disable streaming model output (wait for the full response)')
   .option('-t, --max-turns <number>', 'Maximum turns', '20')
   .option('-v, --verification <level>', 'Verification level (0-5; 6 formal = unsupported)', '3')
-  .option('--runtime <kind>', 'Agent runtime: core | prime | pi', 'core')
-  .option('--wsl <distro>', 'Run prime-agent inside this WSL2 distro (Windows hosts)')
-  .option('--prime-binary <path>', 'prime-agent executable (defaults to `prime-agent` on PATH)')
+
   .option('--local', 'Run without Docker (host execution, plain worktrees)')
   .option('--max-history-tokens <n>', 'History-token budget before older turns are compressed into a recap (0 = never compress)', '60000')
   .option('--history-summary <mode>', "Summarize the compressed history with an LLM ('llm') or keep the deterministic recap ('none')", 'none')
@@ -315,9 +312,11 @@ program
   .option('--commit-message <template>', 'Commit-message template for merge-back ({task} placeholder)', 'guppy: apply agent changes')
   .option('--no-commit', 'Merge changes back without creating git commits (files overlaid onto the repo)')
   .option('--force', 'With --no-commit, overwrite uncommitted repo changes (dangerous)')
+  .option('--no-install', 'Do not install missing dependencies into the workspace (verification levels that need them will be skipped)')
   .option('-q, --quiet', 'Suppress live event streaming (summary only)')
   .option('--resume', 'Resume the most recent interrupted run in this repo')
   .option('--no-mcp', 'Do not load registered MCP servers')
+  .option('--no-subagents', 'Disable the recursive subagent tool (children spawn with their own trace, budget, and verification gate)')
   .action(async (taskDescription, options) => {
     ensureKeyConfigured(options);
     const repoPath = resolve(options.repo);
@@ -355,7 +354,6 @@ program
     console.log(chalk.blue(resumeCheckpoint ? '[Guppy] Resuming...' : '[Guppy] Initializing...'));
     console.log(chalk.gray(`  Repo: ${repoPath}`));
     console.log(chalk.gray(`  Task: ${task.description}`));
-    console.log(chalk.gray(`  Runtime: ${options.runtime}`));
     console.log(chalk.gray(`  Model: ${runtimeOptions.model}`));
     console.log(chalk.gray(`  Max turns: ${resumeCheckpoint?.maxTurns ?? options.maxTurns}`));
     console.log(chalk.gray(`  Verification: ${task.verificationLevel}`));
@@ -370,12 +368,14 @@ program
 
     // Live-stream every event the runtimes and verification engine append
     // (tool calls, model turns, gate results) so a run is watchable. The
-    // store is the single funnel, so this covers core/prime/pi and --resume.
+    // store is the single funnel, so this covers the core runtime and --resume.
     const detachLiveStream = options.quiet ? () => {} : attachLiveStream(eventStore);
 
     const workspaceManager = createWorkspaceManager({
       dockerImage: 'guppy/executor:latest',
       useContainers: !options.local,
+      // commander parses `--no-install` as the negation of `install`.
+      ...(options.install === false ? { installDependencies: false } : {}),
     });
 
     // Fail loudly (and helpfully) when the sandbox can't run: an obscure
@@ -504,16 +504,16 @@ program
   .option('--history-summary <mode>', "Summarize the compressed history with an LLM ('llm') or keep the deterministic recap ('none')", 'none')
   .option('-t, --max-turns <number>', 'Maximum turns', '20')
   .option('-v, --verification <level>', 'Verification level (0-5; 6 formal = unsupported)', '3')
-  .option('--runtime <kind>', 'Agent runtime: core | prime | pi', 'core')
-  .option('--wsl <distro>', 'Run prime-agent inside this WSL2 distro (Windows hosts)')
-  .option('--prime-binary <path>', 'prime-agent executable (defaults to `prime-agent` on PATH)')
+
   .option('--local', 'Run without Docker (host execution, plain worktrees)')
   .option('--keep-worktree', 'Keep the worktree after each turn instead of merging changes back')
   .option('--commit-message <template>', 'Commit-message template for merge-back ({task} placeholder)', 'guppy: apply agent changes')
   .option('--no-commit', 'Merge changes back without creating git commits (files overlaid onto the repo)')
   .option('--force', 'With --no-commit, overwrite uncommitted repo changes (dangerous)')
+  .option('--no-install', 'Do not install missing dependencies into the workspace (verification levels that need them will be skipped)')
   .option('-q, --quiet', 'Suppress live event streaming (summary only)')
   .option('--no-mcp', 'Do not load registered MCP servers')
+  .option('--no-subagents', 'Disable the recursive subagent tool (children spawn with their own trace, budget, and verification gate)')
   .option('--tui', 'Use the fullscreen terminal interface (default when stdin/stdout are TTYs)')
   .option('--no-tui', 'Use the line-based REPL instead of the fullscreen TUI')
   .action(async (options) => {
@@ -592,6 +592,8 @@ program
       // commander parses `--no-commit` as the negation of `commit`.
       ...(options.commit === false ? { noCommit: true } : {}),
       ...(options.force ? { force: true } : {}),
+      // commander parses `--no-install` as the negation of `install`.
+      ...(options.install === false ? { installDependencies: false } : {}),
     };
     if (useTui) {
       await runTui(chatOptions);
@@ -676,6 +678,81 @@ program
       console.log(chalk.green(`\n[Guppy] Trace complete. Total events: ${totalEvents}`));
     } catch (e) {
       console.error(chalk.red('[Guppy] Trace failed:'), e instanceof Error ? e.message : String(e));
+      process.exit(1);
+    }
+  });
+
+program
+  .command('gc')
+  .description(
+    'Clean up guppy worktree/branch residue left by crashed runs (safe: keeps resumable checkpoints unless --force)',
+  )
+  .option('-r, --repo <path>', 'Repository path', process.cwd())
+  .option('--force', 'Delete resumable crashed-run state too (checkpoints included)')
+  .option('--max-age <days>', 'Only delete residue older than this many days (default 7)', '7')
+  .option('--dry-run', 'Show what would be deleted without deleting anything')
+  .action(async (options) => {
+    const repoPath = resolve(options.repo);
+    console.log(chalk.blue(`[Guppy] GC scan on ${repoPath}`));
+
+    const maxAgeDays = optNumber(options.maxAge);
+    if (maxAgeDays === undefined || maxAgeDays < 0) {
+      console.error(chalk.red(`[Guppy] Invalid --max-age "${options.maxAge}": use a non-negative number of days.`));
+      process.exit(1);
+    }
+
+    // A checkpoint means `guppy run --resume` could still re-attach the
+    // workspace — pass them so the GC protects fresh ones by default.
+    const checkpoints = listCheckpoints(repoPath).map((cp) => ({
+      workspaceId: cp.workspaceId,
+      workspacePath: cp.workspacePath,
+      createdAt: Date.parse(cp.createdAt),
+    }));
+    const workspaceManager = createWorkspaceManager({ useContainers: false });
+
+    try {
+      const result = await workspaceManager.gc(repoPath, {
+        checkpoints,
+        force: options.force === true,
+        dryRun: options.dryRun === true,
+        maxAgeDays,
+      });
+      if (!result.ok) throw result.error;
+
+      const { removed, kept } = result.value;
+      console.log(chalk.cyan(`\n[Guppy] Would remove / removed ${removed.length} item(s):`));
+      for (const item of removed) {
+        const where = item.branch ?? item.path ?? item.workspaceId ?? '';
+        console.log(chalk.gray(`  - ${item.kind} ${where} (${item.reason})`));
+      }
+      if (kept.length > 0) {
+        console.log(chalk.yellow(`[Guppy] Kept ${kept.length} item(s):`));
+        for (const item of kept) {
+          const where = item.branch ?? item.path ?? item.workspaceId ?? '';
+          console.log(chalk.gray(`  - ${item.kind} ${where} (${item.reason})`));
+        }
+      }
+
+      // A removed workspace's checkpoint can no longer be resumed — drop the
+      // file so `guppy run --resume` doesn't fail on a stale reference.
+      if (options.dryRun !== true && removed.length > 0) {
+        const byWorkspace = new Map(listCheckpoints(repoPath).map((cp) => [cp.workspaceId, cp]));
+        let removedCheckpoints = 0;
+        for (const item of removed) {
+          if (!item.workspaceId) continue;
+          const cp = byWorkspace.get(item.workspaceId as never);
+          if (!cp) continue;
+          deleteCheckpoint(repoPath, cp.task.id);
+          removedCheckpoints++;
+        }
+        if (removedCheckpoints > 0) {
+          console.log(chalk.gray(`[Guppy] Dropped ${removedCheckpoints} stale checkpoint file(s).`));
+        }
+      }
+
+      console.log(chalk.green('\n[Guppy] GC complete.'));
+    } catch (e) {
+      console.error(chalk.red('[Guppy] GC failed:'), e instanceof Error ? e.message : String(e));
       process.exit(1);
     }
   });

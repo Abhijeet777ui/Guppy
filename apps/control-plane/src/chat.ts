@@ -28,7 +28,6 @@ import type { WorkspaceManager } from '@guppy/workspace';
 import { createWorkspaceManager } from '@guppy/workspace';
 import { ContextEngine } from '@guppy/context-engine';
 import { createVerificationEngine } from '@guppy/verification-engine';
-import { createPiAdapter, createPrimeDaemonRuntime } from '@guppy/agent-runtime';
 import { createCoreRuntime } from '@guppy/core';
 import type { McpBridge } from '@guppy/mcp';
 import type { ModelConfig } from '@guppy/core';
@@ -145,7 +144,6 @@ export class ContextSavingsTracker {
 // ---------------------------------------------------------------------------
 
 export interface RuntimeOptions {
-  runtime: string;
   model: string;
   provider?: string;
   baseUrl?: string;
@@ -153,8 +151,6 @@ export interface RuntimeOptions {
   maxRetries?: number;
   retryBaseDelayMs?: number;
   retryMaxDelayMs?: number;
-  primeBinary?: string;
-  wsl?: string;
   /** Sampling temperature for the core runtime. */
   temperature?: number;
   /** Max completion tokens for the core runtime. */
@@ -183,54 +179,24 @@ export interface RuntimeOptions {
   maxHistoryTokens?: number;
   /** Enable the optional LLM summarizer over the deterministic recap. */
   historySummary?: boolean;
-}
-
-function createDefaultModel(modelId: string): Model<any> {
-  return {
-    id: modelId,
-    name: modelId,
-    api: 'anthropic',
-    provider: 'anthropic',
-    baseUrl: '',
-    reasoning: false,
-    input: ['text', 'image'],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 200000,
-    maxTokens: 8192,
-  };
+  /**
+   * Enable the recursive `subagent` tool on the core runtime (default true
+   * for the CLI; `--no-subagents` disables). Children get their own trace,
+   * budget, and verification gate.
+   */
+  subagents?: boolean;
 }
 
 /**
- * Build the agent runtime for the requested kind. Core is Guppy's own
- * in-process loop (the default); prime/pi are opt-in A/B baselines.
+ * Build the agent runtime. Guppy's own in-process agent core — no pi, no
+ * prime (the external-harness adapters were removed as dead weight; the
+ * subagent tool now covers their delegation capability natively).
  */
 export function buildAgentRuntime(
   options: RuntimeOptions,
   eventStore: EventStore,
   workspaceManager: WorkspaceManager,
 ): AgentRuntime {
-  if (options.runtime === 'pi') {
-    // Reference adapter: in-process pi-agent-core loop (A/B baseline)
-    return createPiAdapter({
-      eventStore,
-      workspaceManager,
-      defaultModel: createDefaultModel(options.model),
-      maxTurns: options.maxTurns,
-    });
-  }
-  if (options.runtime === 'prime') {
-    // Opt-in: drive the external prime-agent binary headlessly.
-    return createPrimeDaemonRuntime({
-      eventStore,
-      model: options.model,
-      // Force the headless json run in-process; the shared daemon's worker
-      // lifecycle is flaky on Windows (worker_auth timeouts).
-      env: { PRIME_AGENT_NO_DAEMON: '1' },
-      ...(options.primeBinary ? { binary: options.primeBinary } : {}),
-      ...(options.wsl ? { commandPrefix: ['wsl', '-d', options.wsl, '--'] } : {}),
-    });
-  }
-  // Default: Guppy's own in-process agent core (no pi, no prime).
   return createCoreRuntime({
     eventStore,
     workspaceManager,
@@ -245,6 +211,7 @@ export function buildAgentRuntime(
     ...(options.contextCaptureDir ? { contextCaptureDir: options.contextCaptureDir } : {}),
     ...(options.maxHistoryTokens !== undefined ? { maxHistoryTokens: options.maxHistoryTokens } : {}),
     ...(options.historySummary ? { historySummarizer: {} } : {}),
+    ...(options.subagents === false ? {} : { subagent: {} }),
   });
 }
 
@@ -547,6 +514,8 @@ export interface ChatOptions extends RuntimeOptions {
   noCommit?: boolean;
   /** With noCommit, overwrite uncommitted repo changes instead of refusing. */
   force?: boolean;
+  /** Disable the dependency-install fallback (CLI: `--no-install`). */
+  installDependencies?: boolean;
   /** Where to materialize worktrees (defaults to the workspace manager's cwd-based base). */
   worktreeBase?: string;
   /** Overridable streams so tests/CI can script stdin. */
@@ -592,6 +561,7 @@ export function createChatEngine(options: ChatOptions): ChatEngine {
     dockerImage: 'guppy/executor:latest',
     useContainers: !options.local,
     ...(options.worktreeBase ? { worktreeBase: options.worktreeBase } : {}),
+    ...(options.installDependencies === false ? { installDependencies: false } : {}),
   });
   const contextEngine = new ContextEngine({ maxTokens: 100_000 });
   const verificationEngine = createVerificationEngine({
@@ -940,7 +910,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
   console.log(chalk.gray(`  Repo: ${repoPath}`));
   console.log(
     chalk.gray(
-      `  Runtime: ${options.runtime}  Model: ${options.model}  Verification: ${verificationLevel}  Max turns: ${options.maxTurns}`,
+      `  Model: ${options.model}  Verification: ${verificationLevel}  Max turns: ${options.maxTurns}`,
     ),
   );
   console.log(chalk.gray('  Commands: /help  /models  /provider  /model  /verify <0-5>  /plan  /build  /exit'));

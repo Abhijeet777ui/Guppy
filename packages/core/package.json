@@ -19,6 +19,7 @@
   "dependencies": {
     "@guppy/contracts": "workspace:*",
     "@guppy/event-store": "workspace:*",
+    "@guppy/verification-engine": "workspace:*",
     "@guppy/workspace": "workspace:*"
   },
   "devDependencies": {

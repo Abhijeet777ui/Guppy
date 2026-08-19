@@ -326,7 +326,7 @@ describe('extractFixes', () => {
     expect(fixes[0]!.changedFiles).toEqual(['src/a.ts']);
   });
 
-  it('attributes a file change to all open failures (documented imprecision)', () => {
+  it('attributes a file change to all open failures but dilutes confidence', () => {
     const fixes = extractFixes([
       testEvent('TestFailed', 'a', 1),
       testEvent('TestFailed', 'b', 2),
@@ -335,7 +335,38 @@ describe('extractFixes', () => {
       testEvent('TestPassed', 'b', 5),
     ]);
     expect(fixes).toHaveLength(2);
+    // Both fixes keep the change (a shared helper can fix several failures),
+    // but the attribution is ambiguous — two failures were open when the
+    // change happened — so confidence is below the isolated case.
     expect(fixes.every((f) => f.changedFiles.includes('src/common.ts'))).toBe(true);
+    expect(fixes.every((f) => f.confidence < 1)).toBe(true);
+  });
+
+  it('scores an isolated single-file fix at full confidence', () => {
+    const fixes = extractFixes([
+      testEvent('TestFailed', 'sum', 1),
+      fileChanged('src/sum.ts', 2),
+      testEvent('TestPassed', 'sum', 3),
+    ]);
+    expect(fixes).toHaveLength(1);
+    expect(fixes[0]!.confidence).toBe(1);
+  });
+
+  it('dilutes confidence when many files change across concurrent failures', () => {
+    const fixes = extractFixes([
+      testEvent('TestFailed', 'a', 1),
+      testEvent('TestFailed', 'b', 2),
+      fileChanged('src/one.ts', 3),
+      fileChanged('src/two.ts', 4),
+      fileChanged('src/three.ts', 5),
+      fileChanged('src/four.ts', 6),
+      testEvent('TestPassed', 'a', 7),
+      testEvent('TestPassed', 'b', 8),
+    ]);
+    expect(fixes).toHaveLength(2);
+    // 4+ files (-0.15) + not isolated (-0.25): 0.5 - 0.15 = 0.35.
+    expect(fixes[0]!.confidence).toBe(0.35);
+    expect(fixes[1]!.confidence).toBe(0.35);
   });
 });
 
@@ -395,6 +426,35 @@ describe('layered cross-repo memory', () => {
     } finally {
       rmSync(repoA, { recursive: true, force: true });
       rmSync(repoB, { recursive: true, force: true });
+      rmSync(global, { recursive: true, force: true });
+    }
+  });
+
+  it('does not mirror low-confidence fixes into the global store', () => {
+    const repoA = mkdtempSync(join(tmpdir(), 'memory-repo-a-'));
+    const global = mkdtempSync(join(tmpdir(), 'memory-global-'));
+    try {
+      const storeA = layered(repoA, global);
+      // Two concurrent failures and four changed files → confidence 0.35.
+      storeA.ingestTrajectory(
+        makeTrajectory(ulid(), ulid(), [
+          testEvent('TestFailed', 'a', 1_000),
+          testEvent('TestFailed', 'b', 2_000),
+          fileChanged('src/one.ts', 3_000),
+          fileChanged('src/two.ts', 4_000),
+          fileChanged('src/three.ts', 5_000),
+          fileChanged('src/four.ts', 6_000),
+          testEvent('TestPassed', 'a', 7_000),
+          testEvent('TestPassed', 'b', 8_000),
+        ]),
+      );
+      const globalStore = createMemoryStore({ rootDir: global, defaultLimit: 10, recencyHalfLifeDays: 30 });
+      // Both fixes stay repo-local: weak attributions must not follow the
+      // user across repos.
+      expect(globalStore.count()).toBe(0);
+      expect(storeA.retrieve({ type: 'fix' })).toHaveLength(2);
+    } finally {
+      rmSync(repoA, { recursive: true, force: true });
       rmSync(global, { recursive: true, force: true });
     }
   });

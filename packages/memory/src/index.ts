@@ -32,6 +32,14 @@ export interface MemoryStoreConfig {
    * retrievable in another (the memory counterpart of `~/.guppy/skills`).
    */
   secondaryRootDir?: string;
+  /**
+   * Fixes at or above this relevance are mirrored into the per-user global
+   * store; weaker attributions stay repo-local so garbage correlations
+   * (e.g. a flaky test's failure coinciding with an unrelated edit) don't
+   * follow the user across repos. Distilled fixes carry
+   * `relevance = extractFixes` confidence.
+   */
+  globalMirrorConfidence: number;
 }
 
 /** Per-user global memory dir; override with `GUPPY_MEMORY_DIR` (hermetic tests, CI). */
@@ -71,6 +79,7 @@ export class MemoryStore {
         rootDir: config.secondaryRootDir,
         defaultLimit: config.defaultLimit,
         recencyHalfLifeDays: config.recencyHalfLifeDays,
+        globalMirrorConfidence: config.globalMirrorConfidence,
       });
     }
   }
@@ -91,8 +100,10 @@ export class MemoryStore {
       if (this.cache) this.cache.push(full);
       // Fixes are the cross-repo asset: mirror them into the global store
       // with the same id so a later repo can retrieve them (primary wins on
-      // dedupe). Trajectory summaries stay local — noise across repos.
-      if (full.type === 'fix' && this.secondary) {
+      // dedupe). Only confident fixes propagate — low-relevance attributions
+      // stay repo-local so garbage correlations don't poison other repos.
+      // Trajectory summaries stay local — noise across repos.
+      if (full.type === 'fix' && this.secondary && full.relevance >= this.config.globalMirrorConfidence) {
         const mirrored = this.secondary.record(full);
         if (!mirrored.ok) return err(mirrored.error);
       }
@@ -134,7 +145,9 @@ export class MemoryStore {
         summary: `Fix for "${fix.failureName}": changed ${fix.changedFiles.join(', ') || 'unknown files'}`,
         detail: fix,
         tags: ['fix', fix.failureKind, ...fix.changedFiles.map(basenameTag)],
-        relevance: 1.0,
+        // Evidence strength doubles as relevance: ambiguous attributions
+        // rank low and stay out of the global cross-repo store.
+        relevance: fix.confidence,
         taskId: trajectory.taskId,
       });
       if (result.ok) created.push(result.value);
@@ -260,17 +273,34 @@ export interface ExtractedFix {
   failureName: string;
   failureMessage: string;
   changedFiles: string[];
+  /**
+   * Evidence strength that the changed files explain the pass, 0..1:
+   * base 0.5 for any change between failure and pass, +0.25 for a single
+   * changed file, +0.25 when every contributing change happened while this
+   * was the only open failure, -0.15 when four or more files changed.
+   * Deterministic — no LLM in learning.
+   */
+  confidence: number;
+}
+
+/** An open fix plus the ambiguity observed at each contributing change. */
+interface OpenFix extends ExtractedFix {
+  /** How many failures were open when each contributing change happened. */
+  openCountsAtChange: number[];
 }
 
 /**
  * Scan a trajectory's events for failure → file changes → pass sequences.
  * The files changed between a failure and the next matching pass are the
- * candidate fix for that failure.
+ * candidate fix for that failure. Every change is attributed to all open
+ * failures (a shared helper can fix several), but the confidence score
+ * dilutes when several failures were open concurrently or many files
+ * changed — the attribution is ambiguous there.
  */
 export function extractFixes(events: Event[]): ExtractedFix[] {
   const fixes: ExtractedFix[] = [];
   // Open failures by name, each accumulating file changes until resolved
-  const open = new Map<string, ExtractedFix>();
+  const open = new Map<string, OpenFix>();
 
   for (const event of events) {
     switch (event.type) {
@@ -281,6 +311,8 @@ export function extractFixes(events: Event[]): ExtractedFix[] {
           failureName: name,
           failureMessage: event.payload.output ?? '',
           changedFiles: [],
+          confidence: 0,
+          openCountsAtChange: [],
         });
         break;
       }
@@ -291,14 +323,18 @@ export function extractFixes(events: Event[]): ExtractedFix[] {
             failureName: e.file,
             failureMessage: e.message,
             changedFiles: [],
+            confidence: 0,
+            openCountsAtChange: [],
           });
         }
         break;
       }
       case 'FileChanged': {
+        const openCount = open.size;
         for (const fix of open.values()) {
           if (!fix.changedFiles.includes(event.payload.path)) {
             fix.changedFiles.push(event.payload.path);
+            fix.openCountsAtChange.push(openCount);
           }
         }
         break;
@@ -307,7 +343,7 @@ export function extractFixes(events: Event[]): ExtractedFix[] {
         const key = `test:${event.payload.name}`;
         const fix = open.get(key);
         if (fix && fix.changedFiles.length > 0) {
-          fixes.push(fix);
+          fixes.push(closeFix(fix));
           open.delete(key);
         }
         break;
@@ -315,7 +351,7 @@ export function extractFixes(events: Event[]): ExtractedFix[] {
       case 'TypecheckPassed': {
         for (const [key, fix] of open) {
           if (key.startsWith('typecheck:') && fix.changedFiles.length > 0) {
-            fixes.push(fix);
+            fixes.push(closeFix(fix));
             open.delete(key);
           }
         }
@@ -325,6 +361,16 @@ export function extractFixes(events: Event[]): ExtractedFix[] {
   }
 
   return fixes;
+}
+
+/** Score a resolved fix's evidence strength (see ExtractedFix.confidence). */
+function closeFix(fix: OpenFix): ExtractedFix {
+  let confidence = 0.5;
+  if (fix.changedFiles.length === 1) confidence += 0.25;
+  if (fix.openCountsAtChange.every((c) => c === 1)) confidence += 0.25;
+  if (fix.changedFiles.length >= 4) confidence -= 0.15;
+  const { openCountsAtChange, ...rest } = fix;
+  return { ...rest, confidence: Math.max(0, Math.min(1, confidence)) };
 }
 
 function tokenize(text: string): string[] {
@@ -348,6 +394,7 @@ export function createMemoryStore(config: Partial<MemoryStoreConfig> = {}): Memo
     rootDir: join(process.cwd(), '.guppy', 'memory'),
     defaultLimit: 10,
     recencyHalfLifeDays: 30,
+    globalMirrorConfidence: 0.7,
     ...config,
   };
   return new MemoryStore(defaultConfig);

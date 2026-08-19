@@ -121,8 +121,16 @@ export function renderLiveEvent(event: Event): string | null {
       return chalk.gray(`[ckpt] ${p.reason ?? ''}`);
     }
     case 'AgentForked':
-    case 'AgentMerged':
-      return chalk.gray(`[agent] ${event.type.replace('Agent', '').toLowerCase()}`);
+      return chalk.gray('[agent] forked subagent');
+    case 'AgentMerged': {
+      const p = event.payload as { gate?: { passed?: boolean; level?: number } };
+      const gate = p.gate
+        ? p.gate.passed
+          ? chalk.green(` (gate ${p.gate.level} green)`)
+          : chalk.red(` (gate ${p.gate.level} red)`)
+        : '';
+      return chalk.gray(`[agent] merged subagent${gate}`);
+    }
     case 'TrajectoryCompleted': {
       const p = event.payload as { outcome?: string };
       return chalk.bold(`[done] ${p.outcome ?? ''}`);

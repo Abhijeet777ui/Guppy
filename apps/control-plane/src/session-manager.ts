@@ -4,6 +4,7 @@
 
 import type {
   AgentRuntime,
+  Checkpoint,
   Task,
   Context,
   Trajectory,
@@ -404,8 +405,79 @@ export class SessionManager {
     let lastGateErrors: string[] = [];
     let passed = false;
 
+    // A hard crash mid-attempt leaves an event-store session with no terminal
+    // TrajectoryCompleted plus a full-context snapshot cursor. Resume that
+    // conversation at the turn level instead of starting a fresh attempt.
+    const runtimeCheckpoint = await this.findResumableCheckpoint(task.id);
+    let startAttempt = checkpoint.attemptsCompleted + 1;
+
     try {
-      for (let attempt = checkpoint.attemptsCompleted + 1; attempt <= this.config.maxTurns; attempt++) {
+      if (runtimeCheckpoint) {
+        console.log(
+          `[SessionManager] Resuming interrupted conversation in session ${runtimeCheckpoint.sessionId}`,
+        );
+        const resumeResult = await this.config.agentRuntime.resume(runtimeCheckpoint, signal);
+        if (!resumeResult.ok) {
+          this.state.status = 'failed';
+          await this.teardown('failure');
+          return err(resumeResult.error);
+        }
+        lastTrajectory = resumeResult.value;
+        this.state.trajectory = lastTrajectory;
+        context = runtimeCheckpoint.context;
+        this.state.context = context;
+        this.state.turn = checkpoint.attemptsCompleted + 1;
+        sessionIds.push(runtimeCheckpoint.sessionId);
+
+        if (lastTrajectory.outcome === 'cancelled') {
+          this.state.status = 'cancelled';
+          deleteCheckpoint(this.config.repoPath, task.id);
+          await this.teardown('cancelled');
+          return ok(lastTrajectory);
+        }
+
+        if (this.isModelUnreachable(lastTrajectory)) {
+          this.state.status = 'failed';
+          deleteCheckpoint(this.config.repoPath, task.id);
+          await this.teardown('failure');
+          return ok(lastTrajectory);
+        }
+
+        const gateResult = await this.config.verificationEngine.verifyWithBudget(
+          context,
+          task,
+          task.verificationLevel,
+        );
+
+        if (gateResult.passed) {
+          passed = true;
+          this.state.status = 'completed';
+          // Skip the fresh-attempt loop below.
+          startAttempt = this.config.maxTurns + 1;
+        } else {
+          lastGateErrors = gateResult.errors.map((e) => e.message);
+          console.log(
+            `[SessionManager] Resumed attempt failed the gate: ` +
+              gateResult.errors.slice(0, 2).map((e) => e.message).join(' | ').slice(0, 160),
+          );
+          const feedback = this.buildFailureFeedback(gateResult.errors, `gate level ${task.verificationLevel}`);
+          testResults = feedback.testResults;
+          errors = feedback.errors;
+          memories = this.retrieveMemoriesFor(gateResult.errors);
+          this.saveRunCheckpoint({
+            task,
+            attemptsCompleted: checkpoint.attemptsCompleted + 1,
+            testResults,
+            errors,
+            memories,
+            context,
+            workspace,
+          });
+          startAttempt = checkpoint.attemptsCompleted + 2;
+        }
+      }
+
+      for (let attempt = startAttempt; attempt <= this.config.maxTurns; attempt++) {
         this.state.turn = attempt;
 
         const filesResult = await this.config.workspaceManager.listFiles(workspace.id);
@@ -526,6 +598,24 @@ export class SessionManager {
       trajectory.metrics.tokensTotal === 0 &&
       trajectory.metrics.toolCalls === 0
     );
+  }
+
+  /**
+   * Find a mid-attempt resume cursor: a session whose log has no terminal
+   * TrajectoryCompleted (a hard crash) and that has a full-context snapshot
+   * left by the runtime. Returns the latest such checkpoint, or null when
+   * every session completed normally (attempt-level resume covers those).
+   */
+  private async findResumableCheckpoint(taskId: ULID): Promise<Checkpoint | null> {
+    const store = this.config.eventStore;
+    if (!store) return null;
+    for (const sessionId of await store.listSessions(taskId)) {
+      const trajectory = await store.getTrajectory(taskId, sessionId);
+      if (!trajectory || trajectory.outcome !== 'running') continue;
+      const checkpoint = store.getLatestCheckpoint(taskId, sessionId);
+      if (checkpoint) return checkpoint;
+    }
+    return null;
   }
 
   /** Minimal empty trajectory used when a run fails before any attempt. */
@@ -715,7 +805,16 @@ export class SessionManager {
       } else if (this.config.keepWorktree) {
         console.log(`[SessionManager] Keeping worktree at ${workspace.worktreePath} (--keep-worktree)`);
       } else {
-        await this.config.workspaceManager.destroyWorkspace(workspace.id);
+        // Failure / cancellation: discard the sandbox. The workspace branch is
+        // guppy's own scratch — it is never merged on a failed run, so
+        // force-delete it (the unmerged commits die with the sandbox;
+        // --keep-worktree preserves everything for inspection). Without this,
+        // every failed or interrupted run leaks a guppy-xxxxxxxx branch into
+        // the repo's branch list.
+        await this.config.workspaceManager.destroyWorkspace(workspace.id, {
+          deleteBranch: true,
+          forceDeleteBranch: true,
+        });
       }
     }
     await this.config.eventStore?.endSession();

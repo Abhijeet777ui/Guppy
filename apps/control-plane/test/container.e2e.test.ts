@@ -36,6 +36,7 @@ import {
   type AgentRuntime,
   type Checkpoint,
   type Context,
+  type Event,
   type Result,
   type Task,
   type Trajectory,
@@ -100,6 +101,19 @@ async function writeGitFixture(dir: string): Promise<void> {
   await run('git', ['config', 'user.email', 't@t'], { cwd: dir });
   await run('git', ['add', '-A'], { cwd: dir });
   await run('git', ['commit', '-qm', 'init'], { cwd: dir });
+
+  // node_modules is written AFTER the commit so it stays untracked on the
+  // host: the container gets it via the workspace manager's bind mount at
+  // /workspace/node_modules. The tsc shim proves tool levels actually
+  // resolve inside the container — without the mount, `npx --no-install
+  // tsc` fails and level 1 is skipped. The container is Linux, so only the
+  // POSIX shim with the executable bit is needed.
+  mkdirSync(join(dir, 'node_modules', '.bin'), { recursive: true });
+  writeFileSync(
+    join(dir, 'node_modules', '.bin', 'tsc'),
+    '#!/usr/bin/env node\n// Hermetic tsc shim for the container e2e — always passes.\nprocess.exit(0);\n',
+    { encoding: 'utf8', mode: 0o755 },
+  );
 }
 
 function finalAnswer() {
@@ -247,7 +261,8 @@ describe('container mode (guppy/executor)', () => {
         maxTurns: 2,
       });
 
-      const result = await sessionManager.run(makeTask(fixtureDir));
+      const task = makeTask(fixtureDir);
+      const result = await sessionManager.run(task);
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.value.outcome).toBe('success');
@@ -255,6 +270,18 @@ describe('container mode (guppy/executor)', () => {
       // The gate ran inside the container and the fix merged back on the host.
       const merged = readFileSync(join(fixtureDir, 'src', 'math.ts'), 'utf8');
       expect(merged).toContain('Math.min(Math.max(v, min), max)');
+
+      // Level 1 (tsc) actually ran inside the container: the shim lives in
+      // the source repo's node_modules, which only resolves via the
+      // /workspace/node_modules bind mount. Without the mount, `npx
+      // --no-install tsc` would fail and no TypecheckPassed would land.
+      const events: Event[] = [];
+      const sessions = await eventStore.listSessions(task.id as never);
+      for (const sessionId of sessions) {
+        const trajectory = await eventStore.getTrajectory(task.id as never, sessionId);
+        if (trajectory) events.push(...trajectory.events);
+      }
+      expect(events.some((e) => e.type === 'TypecheckPassed')).toBe(true);
 
       await eventStore.close();
     } finally {

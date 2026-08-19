@@ -18,7 +18,6 @@
     "@guppy/contracts": "workspace:*",
     "@guppy/event-store": "workspace:*",
     "@guppy/core": "workspace:*",
-    "@guppy/agent-runtime": "workspace:*",
     "@guppy/workspace": "workspace:*",
     "@guppy/context-engine": "workspace:*",
     "@guppy/verification-engine": "workspace:*",

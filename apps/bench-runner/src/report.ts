@@ -85,14 +85,12 @@ export function renderReport(results: TaskRunResult[], options: BenchOptions): s
   }
   lines.push('');
 
-  const baseline = summarize(results, 'prime-raw');
-  for (const config of configs.filter((c) => c !== 'prime-raw')) {
-    const s = summarize(results, config);
-    const delta = (s.passRate - baseline.passRate) * 100;
-    const tokenRatio = baseline.tokensTotal > 0 ? s.tokensTotal / baseline.tokensTotal : Number.NaN;
-    lines.push(
-      `- ${config} vs prime-raw: pass rate ${delta >= 0 ? '+' : ''}${delta.toFixed(0)}pp, token ratio ${Number.isNaN(tokenRatio) ? '-' : tokenRatio.toFixed(2)}x`,
-    );
+  // The skill A/B: guppy-core vs guppy-core-skill, when both are in the run.
+  if (configs.includes('guppy-core') && configs.includes('guppy-core-skill')) {
+    const core = summarize(results, 'guppy-core');
+    const skill = summarize(results, 'guppy-core-skill');
+    const delta = (skill.passRate - core.passRate) * 100;
+    lines.push(`- guppy-core-skill vs guppy-core: pass rate ${delta >= 0 ? '+' : ''}${delta.toFixed(0)}pp`);
   }
 
   // Per-config ContextOps token savings (estimated from captured payloads).

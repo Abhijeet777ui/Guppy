@@ -19,6 +19,7 @@ import {
   ulid,
   type Checkpoint,
   type Context,
+  type Event,
   type Result,
   type Task,
   type Trajectory,
@@ -210,6 +211,50 @@ class InterruptingRuntime implements AgentRuntime {
   }
 }
 
+/** Records whether resumeTask routed to resume() vs run(). */
+class RecordingRuntime implements AgentRuntime {
+  resumeCalls = 0;
+  runCalls = 0;
+
+  async initialize(_workspace: Workspace): Promise<void> {}
+
+  async shutdown(): Promise<void> {}
+
+  async run(task: Task, context: Context): Promise<Result<Trajectory, Error>> {
+    this.runCalls++;
+    return {
+      ok: true,
+      value: {
+        id: ulid(),
+        taskId: task.id,
+        sessionId: context.sessionId,
+        events: [],
+        outcome: 'success',
+        metrics: { ...EMPTY_METRICS },
+        startedAt: now(),
+        completedAt: now(),
+      },
+    };
+  }
+
+  async resume(checkpoint: Checkpoint): Promise<Result<Trajectory, Error>> {
+    this.resumeCalls++;
+    return {
+      ok: true,
+      value: {
+        id: checkpoint.trajectoryId,
+        taskId: checkpoint.taskId,
+        sessionId: checkpoint.sessionId,
+        events: [],
+        outcome: 'success',
+        metrics: { ...EMPTY_METRICS },
+        startedAt: now(),
+        completedAt: now(),
+      },
+    };
+  }
+}
+
 describe('checkpoint/resume', () => {
   it('resumes from a checkpoint, re-attaches the worktree, and fixes the bug', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'guppy-resume-'));
@@ -341,5 +386,106 @@ describe('checkpoint/resume', () => {
     expect(checkpoint?.attemptsCompleted).toBe(1);
 
     await eventStore.close();
+  });
+
+  it('resumes an interrupted conversation via runtime.resume() when a crashed session exists', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'guppy-resume-runtime-'));
+    tmpDirs.push(dir);
+    const fixtureDir = join(dir, 'fixture');
+    writeFixture(fixtureDir);
+
+    const task = makeTask(fixtureDir);
+
+    // First "process": the crashed attempt had already applied the correct
+    // fix to the worktree before the process died, so the resumed gate goes
+    // green the moment the conversation is picked back up.
+    const wm1 = createWorkspaceManager({ useContainers: false, worktreeBase: join(dir, 'worktrees') });
+    const wsResult = await wm1.createWorkspace(fixtureDir);
+    expect(wsResult.ok).toBe(true);
+    if (!wsResult.ok) return;
+    const workspace = wsResult.value;
+    const worktreePath = workspace.worktreePath ?? fixtureDir;
+    writeFileSync(join(worktreePath, 'src', 'math.ts'), CORRECT_FIX, 'utf8');
+
+    // The crashed session: TaskStarted + a full-context snapshot, no terminal
+    // event — exactly what a hard kill mid-attempt leaves behind.
+    const sessionId = ulid();
+    const eventStore1 = createEventStore({ rootDir: join(dir, 'events') });
+    eventStore1.beginSession(task.id, sessionId);
+    eventStore1.append({
+      id: ulid(),
+      timestamp: now(),
+      type: 'TaskStarted',
+      taskId: task.id,
+      sessionId,
+      payload: { task },
+    } as Event);
+    const context: Context = {
+      taskId: task.id,
+      sessionId,
+      files: [],
+      testResults: [],
+      errors: [],
+      memories: [],
+      skills: [],
+      tokensUsed: 0,
+      maxTokens: 0,
+      selectedAt: now(),
+      selectionReasoning: '',
+    };
+    const snap = await eventStore1.createSnapshot(ulid(), 0, context, 'pre_tool');
+    expect(snap.ok).toBe(true);
+    await eventStore1.close();
+
+    // The attempt-level checkpoint lets resumeTask re-attach the worktree.
+    saveCheckpoint(fixtureDir, {
+      version: 1,
+      task,
+      attemptsCompleted: 0,
+      maxTurns: 3,
+      testResults: [],
+      errors: [],
+      memories: [],
+      context,
+      workspaceId: workspace.id,
+      workspacePath: worktreePath,
+      createdAt: new Date().toISOString(),
+    });
+
+    // Second "process": fresh managers; resumeTask should route to resume().
+    const eventStore2 = createEventStore({ rootDir: join(dir, 'events') });
+    const wm2 = createWorkspaceManager({ useContainers: false, worktreeBase: join(dir, 'worktrees') });
+    const verifier = createVerificationEngine({
+      eventStore: eventStore2,
+      workspaceManager: wm2,
+      projectRoot: fixtureDir,
+      timeout: 60_000,
+    });
+    const memoryStore = createMemoryStore({ rootDir: join(dir, 'memory') });
+    const runtime = new RecordingRuntime();
+    const sessionManager = createSessionManager({
+      repoPath: fixtureDir,
+      agentRuntime: runtime,
+      contextEngine: new ContextEngine(),
+      verificationEngine: verifier,
+      eventStore: eventStore2,
+      workspaceManager: wm2,
+      memoryStore,
+      maxTurns: 3,
+    });
+
+    const result = await sessionManager.resumeTask(loadCheckpoint(fixtureDir, task.id)!);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.outcome).toBe('success');
+
+    // The seam: the interrupted conversation was resumed, never re-run fresh.
+    expect(runtime.resumeCalls).toBe(1);
+    expect(runtime.runCalls).toBe(0);
+
+    // Terminal success clears the attempt-level checkpoint.
+    expect(loadCheckpoint(fixtureDir, task.id)).toBeNull();
+
+    await eventStore2.close();
   });
 });

@@ -13,8 +13,8 @@ import type {
   Result,
 } from '@guppy/contracts';
 import { ulid, now, ok, err } from '@guppy/contracts';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { delimiter, join } from 'node:path';
 import type { EventStore } from '@guppy/event-store';
 import type { WorkspaceManager } from '@guppy/workspace';
 
@@ -35,14 +35,18 @@ const LEVEL_NAMES: Record<VerificationLevel, string> = {
   6: 'formal-verification',
 };
 
-// Tool commands run with the tool resolved from the SOURCE repo's
-// node_modules (`npm exec --prefix <projectRoot>`) while executing against
-// the worktree: worktrees deliberately carry no node_modules (the copy
-// strips it, and git worktrees only have tracked files), so `npx <tool>`
-// there would either silently skip or download a fresh tool from the
-// registry. Level 3-5 commands run via `npm run` in the worktree and need
-// only the runtime node ships.
-const LEVEL_COMMANDS: Record<VerificationLevel, string[]> = {
+// Tool commands run via `npx --no-install` against the worktree, which the
+// workspace manager guarantees carries the repo's node_modules (symlinked
+// from the source repo in local mode, bind-mounted in container mode).
+// `--no-install` makes a missing tool a hard error instead of downloading a
+// fresh one from the registry, and avoids `--prefix <hostPath>`, which a
+// container cannot see. Level 3-5 commands run via `npm run` in the worktree
+// and resolve the repo's test runners the same way.
+//
+// Defaults are overridable per project via `guppy.json` (see
+// loadGuppyConfig): non-Node repos can gate on pytest, cargo test, make
+// test, or any command whose tool is on the PATH.
+const DEFAULT_LEVEL_COMMANDS: Record<VerificationLevel, string[]> = {
   0: [], // Syntax errors surface via tsc at level 1; no standalone command
   1: ['tsc', '--noEmit'],
   2: ['eslint', '.', '--ext', '.ts,.tsx'],
@@ -52,12 +56,123 @@ const LEVEL_COMMANDS: Record<VerificationLevel, string[]> = {
   6: ['dafny', 'verify'], // Unsupported: no tooling setup (CLI rejects -v 6)
 };
 
+// ---------------------------------------------------------------------------
+// Per-project verification config (`<repo>/guppy.json`)
+// ---------------------------------------------------------------------------
+
+/**
+ * One level's command override. `alwaysAvailable` skips availability probing
+ * (useful when the command itself is the repo's own script runner, e.g.
+ * `make` in a repo that always ships a Makefile).
+ */
+export interface LevelCommandConfig {
+  /** Command to run for this level, with the worktree as cwd. */
+  command: string[];
+  /** Skip availability probing and always run this level. */
+  alwaysAvailable?: boolean;
+}
+
+export interface GuppyVerificationConfig {
+  /** `"1"` … `"6"`; value is `{ command, alwaysAvailable? }` or a bare command array. */
+  levels?: Partial<Record<string, LevelCommandConfig | string[]>>;
+}
+
+export interface GuppyConfig {
+  verification?: GuppyVerificationConfig;
+}
+
+/**
+ * Read `<projectRoot>/guppy.json`. Returns null when absent or unreadable
+ * (a corrupt config logs a warning and falls back to defaults — the gate
+ * must never break over its own config).
+ */
+export function loadGuppyConfig(projectRoot: string): GuppyConfig | null {
+  const configPath = join(projectRoot, 'guppy.json');
+  if (!existsSync(configPath)) return null;
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(configPath, 'utf-8'));
+    if (typeof parsed !== 'object' || parsed === null) return null;
+    return parsed as GuppyConfig;
+  } catch (e) {
+    console.warn(
+      `[Verification] Could not read ${configPath}: ${e instanceof Error ? e.message : String(e)} — using default levels`,
+    );
+    return null;
+  }
+}
+
+/** Normalize a level's config entry; null when the command is invalid. */
+export function normalizeLevelCommand(cfg: LevelCommandConfig | string[]): LevelCommandConfig | null {
+  const command = Array.isArray(cfg) ? cfg : cfg?.command;
+  if (
+    !Array.isArray(command) ||
+    command.length === 0 ||
+    !command.every((c) => typeof c === 'string' && c.trim() !== '')
+  ) {
+    return null;
+  }
+  return {
+    command,
+    ...(Array.isArray(cfg) ? {} : cfg.alwaysAvailable === true ? { alwaysAvailable: true } : {}),
+  };
+}
+
+/**
+ * Portable PATH probe — no subprocess, works on Windows (PATHEXT names) and
+ * POSIX. `npm` and other shell-resolvable tools return true.
+ */
+export function commandOnPath(tool: string): boolean {
+  const extensions = process.platform === 'win32' ? ['', '.cmd', '.exe', '.bat'] : [''];
+  for (const dir of (process.env['PATH'] ?? '').split(delimiter)) {
+    if (!dir) continue;
+    for (const ext of extensions) {
+      try {
+        if (statSync(join(dir, tool + ext)).isFile()) return true;
+      } catch {
+        // Keep looking.
+      }
+    }
+  }
+  return false;
+}
+
 export class VerificationEngine {
   private config: VerificationEngineConfig;
   private currentWorkspaceId: ULID | null = null;
+  /** Effective per-level commands: `guppy.json` overrides on top of defaults. */
+  private levelCommands: Record<VerificationLevel, string[]> = { ...DEFAULT_LEVEL_COMMANDS };
+  /** Levels the config marks always-available (never skipped by probing). */
+  private alwaysAvailableLevels = new Set<VerificationLevel>();
+  /**
+   * Levels overridden in guppy.json: only these probe the system PATH (a
+   * non-Node repo's pytest/cargo/make). Default levels keep their original
+   * node_modules-only semantics so a machine's global tsc/eslint never
+   * changes behavior the repo didn't opt into.
+   */
+  private configuredLevels = new Set<VerificationLevel>();
 
   constructor(config: VerificationEngineConfig) {
     this.config = config;
+    const guppy = loadGuppyConfig(config.projectRoot);
+    const levels = guppy?.verification?.levels;
+    if (levels) {
+      for (const [rawLevel, cfg] of Object.entries(levels)) {
+        const level = Number(rawLevel);
+        if (!Number.isInteger(level) || level < 0 || level > 6) {
+          console.warn(`[Verification] guppy.json: ignoring unknown verification level "${rawLevel}"`);
+          continue;
+        }
+        if (cfg === undefined) continue;
+        const normalized = normalizeLevelCommand(cfg);
+        if (!normalized) {
+          console.warn(`[Verification] guppy.json: ignoring invalid command for level ${rawLevel}`);
+          continue;
+        }
+        this.levelCommands[level as VerificationLevel] = normalized.command;
+        this.configuredLevels.add(level as VerificationLevel);
+        if (normalized.alwaysAvailable) this.alwaysAvailableLevels.add(level as VerificationLevel);
+      }
+    }
   }
 
   setWorkspace(workspaceId: ULID): void {
@@ -66,7 +181,10 @@ export class VerificationEngine {
 
   /** Whether a level can actually run in this repo (its tool is installed). */
   levelAvailable(level: VerificationLevel): boolean {
-    return this.toolInstalled(LEVEL_COMMANDS[level]);
+    if (this.alwaysAvailableLevels.has(level)) return true;
+    const command = this.levelCommands[level];
+    if (command.length === 0) return true;
+    return this.resolveTool(command, this.configuredLevels.has(level)) !== 'missing';
   }
 
   /**
@@ -76,7 +194,8 @@ export class VerificationEngine {
    * so the same condition never reads two ways.
    */
   levelSkipReason(level: VerificationLevel): string | undefined {
-    const tool = LEVEL_COMMANDS[level]?.[0];
+    if (this.alwaysAvailableLevels.has(level)) return undefined;
+    const tool = this.levelCommands[level]?.[0];
     if (!tool) return undefined;
     return `'${tool}' is not installed in this repo`;
   }
@@ -113,7 +232,7 @@ export class VerificationEngine {
         duration,
         details: {
           levelsRun: [level],
-          command: LEVEL_COMMANDS[level].join(' '),
+          command: this.levelCommands[level].join(' '),
         },
       };
 
@@ -227,18 +346,19 @@ export class VerificationEngine {
   private async runLevel(
     level: VerificationLevel
   ): Promise<{ output: string; errors: VerificationError[] }> {
-    const command = LEVEL_COMMANDS[level];
+    const command = this.levelCommands[level];
     if (!command || command.length === 0) {
       return { output: '', errors: [] };
     }
 
-    // Tool commands (tsc/eslint/dafny) resolve from the source repo's
-    // node_modules via `npm exec --prefix`, running against the worktree
-    // cwd; `npm run` levels run as-is. `--yes` prevents an interactive
-    // install prompt if resolution ever falls through.
-    const effective = command[0] === 'npm'
-      ? command
-      : ['npm', 'exec', '--yes', '--prefix', this.config.projectRoot, '--', ...command];
+    // Node-modules tools (tsc/eslint/dafny) resolve from the worktree's own
+    // node_modules via `npx --no-install` (never from the registry); PATH
+    // tools (npm/pytest/cargo/make/… from the default ladder or guppy.json)
+    // run as-is. The workspace manager guarantees node_modules is present in
+    // the worktree — symlinked from the source repo in local mode, bind-
+    // mounted in container mode — so resolution never needs the host
+    // projectRoot path (which a container cannot see).
+    const effective = this.effectiveCommand(level, command);
 
     const result = await this.config.workspaceManager.exec(this.currentWorkspaceId!, effective, {
       timeout: this.config.timeout,
@@ -332,15 +452,15 @@ export class VerificationEngine {
     // Escalate upward while levels keep passing; a failure stops the ladder —
     // the agent must fix it before stricter (and costlier) levels run.
     for (let level = 0; level <= maxLevel; level++) {
-      const command = LEVEL_COMMANDS[level as VerificationLevel];
-      if (command.length > 0 && !this.toolInstalled(command)) {
+      const command = this.levelCommands[level as VerificationLevel];
+      if (command.length > 0 && !this.levelAvailable(level as VerificationLevel)) {
         // A missing tool is an environment condition, never an agent fault:
         // skip the level with a note instead of failing the ladder on it.
         console.log(`[Verification] Level ${level} skipped: ${this.levelSkipReason(level as VerificationLevel)}`);
         lastResult = {
           ...lastResult,
           level: level as VerificationLevel,
-          details: { ...lastResult.details, [`level${level}Skipped`]: `${command[1]} not installed` },
+          details: { ...lastResult.details, [`level${level}Skipped`]: `${command[0]} not installed` },
         };
         continue;
       }
@@ -383,22 +503,46 @@ export class VerificationEngine {
   }
 
   /**
-   * Probe whether a level's tool is actually available in the source repo.
-   * `npm run` levels always qualify (they need only node). Tool levels
-   * (tsc/eslint/dafny) need the binary in `<repo>/node_modules/.bin` — a
-   * missing tool is an environment condition, never an agent fault, so the
-   * ladder skips it with a note instead of failing (or downloading).
+   * Where a level's command resolves: `npm` (always available), the
+   * worktree's node_modules (npx-wrapped), the system PATH (run as-is), or
+   * `missing`. The node_modules check covers the symlink in local mode, the
+   * bind mount mirror in container mode, and deps installed into the sandbox
+   * (which land on the rw-mounted host worktree). `probePath` is true only
+   * for guppy.json-configured levels — the PATH check is what makes a
+   * non-Node repo's pytest/cargo/make resolvable.
    */
-  private toolInstalled(command: string[]): boolean {
-    if (command.length === 0 || command[0] === 'npm') return true;
+  private resolveTool(command: string[], probePath: boolean): 'npm' | 'node_modules' | 'path' | 'missing' {
     const tool = command[0];
-    if (!tool) return true;
-    const binDir = join(this.config.projectRoot, 'node_modules', '.bin');
-    return (
-      existsSync(join(binDir, tool)) ||
-      existsSync(join(binDir, `${tool}.cmd`)) ||
-      existsSync(join(binDir, `${tool}.exe`))
-    );
+    if (!tool || tool === 'npm') return 'npm';
+    for (const binDir of this.binDirs()) {
+      if (
+        existsSync(join(binDir, tool)) ||
+        existsSync(join(binDir, `${tool}.cmd`)) ||
+        existsSync(join(binDir, `${tool}.exe`))
+      ) {
+        return 'node_modules';
+      }
+    }
+    return probePath && commandOnPath(tool) ? 'path' : 'missing';
+  }
+
+  /** Worktree node_modules/.bin first (per-workspace), then the source repo's. */
+  private binDirs(): string[] {
+    const dirs: string[] = [];
+    const worktree = this.currentWorkspaceId
+      ? this.config.workspaceManager.getWorktreePath(this.currentWorkspaceId)
+      : undefined;
+    if (worktree) dirs.push(join(worktree, 'node_modules', '.bin'));
+    dirs.push(join(this.config.projectRoot, 'node_modules', '.bin'));
+    return dirs;
+  }
+
+  /** Wrap node-modules tools in `npx --no-install`; npm/PATH commands run as-is. */
+  private effectiveCommand(level: VerificationLevel, command: string[]): string[] {
+    if (this.resolveTool(command, this.configuredLevels.has(level)) === 'node_modules') {
+      return ['npx', '--no-install', ...command];
+    }
+    return command;
   }
 }
 

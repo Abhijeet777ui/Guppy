@@ -1,15 +1,12 @@
 /**
  * Guppy Bench — runner.
  *
- * Four configurations, same 20 tasks:
- *  - prime-raw:  PrimeDaemonRuntime with the task description only; single
- *                attempt; ground truth is the only verdict.
- *  - guppy-prime: PrimeDaemonRuntime wrapped in the closed loop — ContextEngine
- *                selects files, verification gate (unit tests) decides,
- *                failures feed back as errors/testResults on the next attempt.
- *  - guppy-pi:   same loop, but the in-process PiAgentRuntime drives the work.
- *  - guppy-core: same loop, driven by Guppy's own in-process agent core
- *                (no pi, no prime) via an OpenAI-compatible endpoint.
+ * Two configurations, same 20 tasks:
+ *  - guppy-core: closed loop driven by Guppy's own in-process agent core
+ *                (no pi, no prime) via an OpenAI-compatible endpoint —
+ *                ContextEngine selects files, verification gate (unit tests)
+ *                decides, failures feed back as errors/testResults on the
+ *                next attempt.
  *  - guppy-core-skill: identical to guppy-core, but the context engine
  *                receives skills from `--skills <dir>` (default: the
  *                installed per-user skills). The A/B pair is
@@ -19,9 +16,8 @@
  * workspace the agent edited, plus the task's optional finalCheck.
  */
 
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { dirname, join, posix } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { join, posix } from 'node:path';
 import chalk from 'chalk';
 import {
   ulid,
@@ -33,10 +29,8 @@ import {
   type TestResult,
   type ErrorInfo,
   type FileContent,
-  type Workspace,
   type AgentRuntime,
   type Trajectory,
-  type TrajectoryMetrics,
   type ULID,
 } from '@guppy/contracts';
 import { createEventStore } from '@guppy/event-store';
@@ -46,10 +40,6 @@ import { ContextEngine, loadSkills } from '@guppy/context-engine';
 import { defaultSkillsDir } from '@guppy/skills';
 import { createVerificationEngine } from '@guppy/verification-engine';
 import {
-  createPrimeDaemonRuntime,
-  createPiAdapter,
-} from '@guppy/agent-runtime';
-import {
   createCoreRuntime,
   DEFAULT_MAX_RETRIES,
   DEFAULT_RETRY_BASE_DELAY_MS,
@@ -57,7 +47,6 @@ import {
   type ModelConfig,
 } from '@guppy/core';
 import type { ContextHealthSummary } from './context-health.js';
-import type { Model } from '@earendil-works/pi-ai';
 import { createHash } from 'node:crypto';
 import {
   materializeFixture,
@@ -69,46 +58,12 @@ import {
 } from './fixtures.js';
 
 // ---------------------------------------------------------------------------
-// Prime binary resolution
-// ---------------------------------------------------------------------------
-
-/**
- * Resolve the in-repo prime-agent bundle. The bench harness lives inside the
- * guppy workspace, so the bundle is a sibling repo (`<root>/prime-agent/…`).
- * Walk up from this module's compiled location until the bundle is found, then
- * fall back to a bare `prime-agent` (PATH lookup) — which fails loudly at
- * spawn if it is absent (see runGuppyWrapped).
- */
-export function resolvePrimeBinary(): string {
-  let dir = dirname(fileURLToPath(import.meta.url));
-  for (let i = 0; i < 8; i++) {
-    const candidate = join(dir, 'prime-agent', 'packages', 'coding-agent', 'dist', 'bundle', 'cli.js');
-    if (existsSync(candidate)) return candidate;
-    const parent = dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-  return 'prime-agent';
-}
-
-// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-export type BenchConfigKind =
-  | 'prime-raw'
-  | 'guppy-prime'
-  | 'guppy-pi'
-  | 'guppy-core'
-  | 'guppy-core-skill';
+export type BenchConfigKind = 'guppy-core' | 'guppy-core-skill';
 
-export const ALL_CONFIGS: BenchConfigKind[] = [
-  'prime-raw',
-  'guppy-prime',
-  'guppy-pi',
-  'guppy-core',
-  'guppy-core-skill',
-];
+export const ALL_CONFIGS: BenchConfigKind[] = ['guppy-core', 'guppy-core-skill'];
 
 export interface BenchOptions {
   outDir: string;
@@ -132,10 +87,6 @@ export interface BenchOptions {
   modelTimeoutMs?: number;
   /** Client-side rate limit (requests/minute) for the guppy-core runtime. */
   requestsPerMinute?: number;
-  /** Run prime-agent inside this WSL2 distro. */
-  wslDistro?: string;
-  /** Override the prime-agent binary name/path. */
-  primeBinary?: string;
   maxAttempts: number;
   attemptTimeoutMs: number;
   /** Materialize + gate only; never invoke an LLM. */
@@ -191,21 +142,6 @@ export interface TaskRunResult {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function createDefaultModel(modelId: string): Model<any> {
-  return {
-    id: modelId,
-    name: modelId,
-    api: 'anthropic',
-    provider: 'anthropic',
-    baseUrl: '',
-    reasoning: false,
-    input: ['text', 'image'],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 200000,
-    maxTokens: 8192,
-  };
-}
-
 /**
  * Build the guppy-core ModelConfig from bench options. The retry/backoff knobs
  * are omitted when unset so the client's defaults apply.
@@ -254,22 +190,6 @@ function makeTask(spec: BenchTaskSpec, repoPath: string): Task {
     verificationLevel: 3,
     createdAt: now(),
     metadata: { benchTaskId: spec.id },
-  };
-}
-
-function emptyContext(task: Task): Context {
-  return {
-    taskId: task.id,
-    sessionId: ulid(),
-    files: [],
-    testResults: [],
-    errors: [],
-    memories: [],
-    skills: [],
-    tokensUsed: 0,
-    maxTokens: 0,
-    selectedAt: now(),
-    selectionReasoning: 'prime-raw baseline: no guppy context selection',
   };
 }
 
@@ -359,111 +279,7 @@ export function extractFailingTestNames(output: string): string[] {
 // Config runners
 // ---------------------------------------------------------------------------
 
-interface RuntimeHandle {
-  runtime: AgentRuntime;
-  workspace: Workspace;
-  cleanup: () => Promise<void>;
-}
-
-async function createPrimeHandle(
-  spec: BenchTaskSpec,
-  cwdDir: string,
-  options: BenchOptions,
-  eventStore: ReturnType<typeof createEventStore>,
-): Promise<RuntimeHandle> {
-  const runtime = createPrimeDaemonRuntime({
-    eventStore,
-    model: options.model,
-    timeoutMs: options.attemptTimeoutMs,
-    // Run prime-agent in-process: the shared daemon's worker lifecycle is flaky
-    // on Windows (worker_auth timeouts), and per-task processes are cleaner.
-    env: { PRIME_AGENT_NO_DAEMON: '1' },
-    binary: options.primeBinary ?? resolvePrimeBinary(),
-    ...(options.wslDistro ? { commandPrefix: ['wsl', '-d', options.wslDistro, '--'] } : {}),
-  });
-  const workspace: Workspace = {
-    id: ulid(),
-    repoPath: cwdDir,
-    worktreePath: cwdDir,
-    createdAt: now(),
-  };
-  await runtime.initialize(workspace);
-  return {
-    runtime,
-    workspace,
-    cleanup: async () => {
-      await runtime.shutdown();
-      await eventStore.close();
-    },
-  };
-}
-
-/** prime-raw: one shot, no context selection, no retry, gate decides. */
-async function runPrimeRaw(
-  spec: BenchTaskSpec,
-  fixtureDir: string,
-  options: BenchOptions,
-): Promise<TaskRunResult> {
-  const startedAt = Date.now();
-  const base: Omit<TaskRunResult, 'passed' | 'attempts'> = {
-    config: 'prime-raw',
-    taskId: spec.id,
-    kind: spec.kind,
-    wallTimeMs: 0,
-    tokensTotal: 0,
-    toolCalls: 0,
-    fixtureDir,
-  };
-
-  if (options.dryRun) {
-    const gate = await runTestSuite(fixtureDir);
-    return {
-      ...base,
-      passed: false,
-      attempts: [],
-      error: gate.passed ? DRY_RUN_UNEXPECTEDLY_GREEN : DRY_RUN_RED_AS_EXPECTED,
-    };
-  }
-
-  const eventStore = createEventStore({
-    rootDir: join(options.outDir, 'events', 'prime-raw', spec.id),
-  });
-  const handle = await createPrimeHandle(spec, fixtureDir, options, eventStore);
-
-  try {
-    const task = makeTask(spec, fixtureDir);
-    const attemptStart = Date.now();
-    const result = await handle.runtime.run(task, emptyContext(task));
-    const metrics: TrajectoryMetrics | null = result.ok ? result.value.metrics : null;
-
-    const gate = await runTestSuite(fixtureDir);
-    const reader = createFileReader(fixtureDir);
-    const passed = gate.passed && (!spec.finalCheck || spec.finalCheck(reader));
-
-    return {
-      ...base,
-      passed,
-      attempts: [
-        {
-          attempt: 1,
-          wallTimeMs: Date.now() - attemptStart,
-          tokens: metrics?.tokensTotal ?? 0,
-          toolCalls: metrics?.toolCalls ?? 0,
-          verified: passed,
-          ...(result.ok ? {} : { errorSummary: result.error.message }),
-        },
-      ],
-      wallTimeMs: Date.now() - startedAt,
-      tokensTotal: metrics?.tokensTotal ?? 0,
-      toolCalls: metrics?.toolCalls ?? 0,
-      ...(passed ? {} : { error: result.ok ? gate.output.slice(0, 1000) : result.error.message }),
-    };
-  } finally {
-    await handle.cleanup();
-  }
-}
-
-/** guppy-prime / guppy-pi / guppy-core: closed loop with context selection + verification gate. */
+/** guppy-core / guppy-core-skill: closed loop with context selection + verification gate. */
 async function runGuppyWrapped(
   config: BenchConfigKind,
   spec: BenchTaskSpec,
@@ -503,37 +319,20 @@ async function runGuppyWrapped(
   const workspace = wsResult.value;
   const worktreeDir = workspace.worktreePath ?? fixtureDir;
 
-  const runtime: AgentRuntime =
-    config === 'guppy-pi'
-      ? createPiAdapter({
-          eventStore,
-          workspaceManager,
-          defaultModel: createDefaultModel(options.model),
-          maxTurns: 30,
-        })
-      : config === 'guppy-core' || config === 'guppy-core-skill'
-        ? createCoreRuntime({
-            eventStore,
-            workspaceManager,
-            model: coreModelConfig(options),
-            maxTurns: 30,
-            contextCaptureDir: join(options.outDir, 'context', config, spec.id),
-            ...(options.maxHistoryTokens !== undefined
-              ? { maxHistoryTokens: options.maxHistoryTokens }
-              : {}),
-            ...(options.historyKeepRecentTurns !== undefined
-              ? { historyKeepRecentTurns: options.historyKeepRecentTurns }
-              : {}),
-            ...(options.historySummary === 'llm' ? { historySummarizer: {} } : {}),
-          })
-        : createPrimeDaemonRuntime({
-            eventStore,
-            model: options.model,
-            timeoutMs: options.attemptTimeoutMs,
-            env: { PRIME_AGENT_NO_DAEMON: '1' },
-            binary: options.primeBinary ?? resolvePrimeBinary(),
-            ...(options.wslDistro ? { commandPrefix: ['wsl', '-d', options.wslDistro, '--'] } : {}),
-          });
+  const runtime: AgentRuntime = createCoreRuntime({
+    eventStore,
+    workspaceManager,
+    model: coreModelConfig(options),
+    maxTurns: 30,
+    contextCaptureDir: join(options.outDir, 'context', config, spec.id),
+    ...(options.maxHistoryTokens !== undefined
+      ? { maxHistoryTokens: options.maxHistoryTokens }
+      : {}),
+    ...(options.historyKeepRecentTurns !== undefined
+      ? { historyKeepRecentTurns: options.historyKeepRecentTurns }
+      : {}),
+    ...(options.historySummary === 'llm' ? { historySummarizer: {} } : {}),
+  });
 
   const verifier = createVerificationEngine({
     eventStore,
@@ -816,9 +615,6 @@ export async function runSingle(
 
   console.log(chalk.cyan(`\n[${config}] ${spec.id} (${spec.kind})`));
 
-  if (config === 'prime-raw') {
-    return runPrimeRaw(spec, fixtureDir, options);
-  }
   return runGuppyWrapped(config, spec, fixtureDir, options);
 }
 

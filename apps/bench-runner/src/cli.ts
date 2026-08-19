@@ -16,7 +16,6 @@ import {
   ALL_CONFIGS,
   DRY_RUN_RED_AS_EXPECTED,
   effectiveRetrySettings,
-  resolvePrimeBinary,
   runBench,
   type BenchConfigKind,
   type BenchOptions,
@@ -32,7 +31,7 @@ const program = new Command();
 
 program
   .name('guppy-bench')
-  .description('Baseline measurement: raw prime-agent vs guppy-wrapped on controlled tasks')
+  .description('Guppy bench: gated closed-loop measurement on controlled tasks')
   .version('1.0.0');
 
 program
@@ -94,8 +93,6 @@ program
   .option('--provider <name>', 'Model provider for the guppy-core runtime (openai, openrouter, nvidia, …)', 'openrouter')
   .option('--base-url <url>', 'OpenAI-compatible API base URL for the guppy-core runtime')
   .option('--api-key <key>', 'API key for the guppy-core runtime (provider env var used when omitted)')
-  .option('--wsl <distro>', 'Run prime-agent inside this WSL2 distro (Windows hosts)')
-  .option('--prime-binary <path>', 'prime-agent binary path (defaults to the in-repo bundle)', resolvePrimeBinary())
   .option('--max-attempts <n>', 'Max closed-loop attempts per task (guppy configs)', '3')
   .option('--attempt-timeout <ms>', 'Per-attempt timeout in ms', '600000')
   .option('--max-retries <n>', 'Max retries per model request for guppy-core (429/5xx/network)')
@@ -140,12 +137,6 @@ program
       ...(retryBaseDelayMs !== undefined ? { retryBaseDelayMs } : {}),
       ...(retryMaxDelayMs !== undefined ? { retryMaxDelayMs } : {}),
       ...(requestsPerMinute !== undefined ? { requestsPerMinute } : {}),
-      ...(typeof options['wsl'] === 'string' && options['wsl'] !== ''
-        ? { wslDistro: String(options['wsl']) }
-        : {}),
-      ...(typeof options['primeBinary'] === 'string' && options['primeBinary'] !== ''
-        ? { primeBinary: String(options['primeBinary']) }
-        : {}),
       maxAttempts: parseInt(String(options['maxAttempts']), 10) || 3,
       // Commander camelizes --attempt-timeout to 'attemptTimeout'; guard NaN.
       attemptTimeoutMs: parseInt(String(options['attemptTimeout']), 10) || 600_000,
