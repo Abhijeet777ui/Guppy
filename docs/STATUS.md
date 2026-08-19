@@ -1,7 +1,66 @@
 # Guppy — Project Status Report
 
-**Date:** August 16, 2026
+**Date:** August 17, 2026 (freshest section §0 below; §1+ is the August 16 report, still accurate for engine internals)
 **Scope:** All `packages/*` and `apps/*` in the guppy workspace, plus the `prime-agent/` integration used as an A/B baseline.
+
+---
+
+## 0. August 19 session — Slice 5 + cross-repo memory + skill bench — READ THIS FIRST (restart point)
+
+**Slice 5 shipped:** `guppy skill install <name|url|path>` / `guppy skill remove <name>` / `guppy skill list` (user + repo origins) via a new **`@guppy/skills`** package. Skills install into the per-user `~/.guppy/skills` (or `$GUPPY_SKILLS_DIR`) from a registry (`--registry` accepts a URL, file path, or inline JSON; default is the bundled `guppy-builtin` registry: code-review, write-tests, commit-hygiene, refactor-rename), a direct `https://` URL to a `.md` skill file, or a local path. Installed files carry `source:` / `installed-at:` provenance front-matter; duplicate installs refuse without `--force`; `skill install` with no args lists the registry with installed marks. **SessionManager now loads user-level skills merged with repo skills** (repo wins name collisions), so an installed skill reaches the model's context in every repo — the cross-repo half of §5.7 for skills. Verification: build green; **262 tests** across 13 suites (`@guppy/skills` adds 13; the only full-suite misses were two pre-existing timing flakes under parallel load — `mcp` bridge and control-plane lint e2e — both pass in isolation). Live CLI smoke: install/list/remove round-trip verified.
+
+**Follow-ups (same session):** (1) **Cross-repo memory** — `@guppy/memory` now supports a layered per-user global store at `~/.guppy/memory` (`$GUPPY_MEMORY_DIR`): `fix` memories distill into both the repo store and the global store (same id), reads merge both with the primary winning dedupes, trajectory summaries stay repo-local, `count`/`clear` span both. SessionManager wires it by default, so a fix distilled in repo A is retrieved in repo B — the memory counterpart of `~/.guppy/skills` (STATUS §5.7 closed for memory too). (2) **Skill-impact bench** — new `guppy-core-skill` bench config: identical closed loop to `guppy-core` but with skills injected from `--skills <dir>` (default: the installed per-user skills dir), plus a **Skill impact A/B** report section (per-task matrix, pass-rate pp + token deltas) when both configs run, and a deterministic **`guppy-bench skill-demo`** (no LLM): the same fixture + scripted runtime twice — no skill → naive edit → gate red; clamp-fix skill in context → correct fix → gate green. **Bug found + fixed:** context-engine `extractKeywords` didn't strip backticks, so a task mentioning `` `clamp` `` produced the keyword "`clamp`" and never matched a skill about `clamp` — skills were silently dropped from context; the split now includes the backtick (the skill-demo exposed it). Verification: build green; **271 tests** across 14 suites (memory 18, bench-runner 27 incl. skill-demo + report A/B + the guppy-core-skill routing regression test, control-plane 80, all others unchanged); full-suite run had zero flakes this time. **Real-model skill A/B (2026-08-19):** 6/6 PASS (3/3 each, 1 attempt) on nemotron-3-super-120b free — the first run exposed a routing bug (#15: `guppy-core-skill` hit the prime runtime; fixed + regression-pinned), and the corrected run measured **+0pp pass rate, +9,894 tokens** for the generic builtin skills (artifacts in `docs/bench-results/skill-ab-nemotron/`; honest finding: generic starter skills cost tokens but don't change outcomes the model already solves; task-specific skills flip gates, proven by skill-demo).
+
+## 0.1 August 17 session — READ THIS FIRST (restart point)
+
+**One-paragraph state:** The engine is built and green. M1–M3 of the UX track are done — the chat TUI, setup wizard, and launch pickers work; Ctrl+C interrupts a turn; themes + exit dump are in; and two real bugs found in live testing today are fixed (the worktree copy crash and the model-stream stall hang). **249 tests pass** across 12 suites (`pnpm -r run build` + `pnpm -r run test` green; `contracts` passes via `--passWithNoTests`). Slice 2 (MCP) shipped and the servers are sandboxed (scrubbed env, workspace cwd, guaranteed tree-kill on session end, proven by a hostile-server test). Slice 4 (plan/build) shipped: a read-only plan phase with a plan gate + `/build` approval. Everything below is **uncommitted on disk** — nothing has been committed today.
+
+### What shipped today
+
+| Item | Where | Status |
+|---|---|---|
+| **M1 — chat TUI** (faithful screen: context bar, markdown replies, one activity line, dim footer, headless test harness) | `apps/control-plane/src/tui.ts`, `tui-logic.ts` | ✅ built + tested |
+| **M2 — onboarding & pickers** (setup wizard + launch picker; model lists fetched **live** from the provider's `/models` endpoint, free-tier sorted first, catalog fallback; picked model works even when not in the catalog) | `apps/control-plane/src/pickers.ts`, `packages/models/src/live-models.ts` | ✅ built + tested (used live by the user) |
+| **`--` CLI fix** (`pnpm cli -- chat` ≡ `pnpm cli chat`) | `cli.ts` | ✅ |
+| **M3 — interrupt/theme/exit dump** (`AbortController` threaded through core client + runtime; `'cancelled'` outcome; `/theme light|dark`; session dump on exit) | `packages/core/*`, `packages/contracts`, `tui.ts` | ✅ built + tested |
+| **Bug fix — worktree copy crash** (`ERR_FS_CP_EINVAL: Cannot copy … to a subdirectory of self` when chatting from a non-git folder like `apps/control-plane`; default `worktreeBase` moved from `<cwd>/.guppy/worktrees` to `~/.guppy/worktrees` — also gets worktrees out of the OneDrive sync path) | `packages/workspace/src/index.ts` | ✅ fixed + e2e-proven on a non-git repo |
+| **Bug fix — model stream stall hang** (the 120s timeout only covered time-to-first-byte; a stream that sent headers then went silent hung forever — the user's 5-min frozen spinner. Added a 60s idle timeout per stream chunk + for the non-streaming body read; a stall now fails visibly in ≤60s) | `packages/core/src/openai-client.ts` | ✅ fixed + 2 new tests |
+
+### Verification numbers (current)
+
+`pnpm -r run build` green (13 packages). `pnpm -r run test`: **249 tests** — core 33, models 43, control-plane 80, mcp 13, event-store 11, memory 13, workspace 7, verification-engine 9, context-engine 8, sleep-cycle 6, agent-runtime 3, bench-runner 23, contracts via `--passWithNoTests`.
+
+### What's left / next
+
+1. **Visual sign-off** of the chat screen (`pnpm cli -- chat --local`) — user eyeballs it, says "looks good".
+2. **Plan/build modes** ✅ — Slice 4 shipped the real plan phase (the indicator stub is now live behavior): `/plan` makes every message a read-only planning turn through a dedicated read-only core runtime (write/run/patch tools withheld, MCP tools dropped), the plan renders with a `Plan ready — /build to execute · /edit to revise` gate footer, and `/build` approves it (emitting `PlanApproved`) and runs it through the full gated loop. `/edit [text]` revises the pending plan by hand (verbatim, no model call) before `/build`, recording a `PlanRevised` event with the model-plan line diff. `PlanProduced`/`PlanRevised`/`PlanApproved` are durable events. Works in both the TUI and the line REPL.
+3. **Slice 2 — MCP external tools** ✅ — `@guppy/mcp` + `guppy mcp add/list/remove` shipped (13 tests; bridges servers over stdio via the official SDK). Server processes are sandboxed: env scrubbed of credentials, cwd pinned to the workspace, and a guaranteed tree-kill on session end (SDK `close()` only kills the direct child — `killProcessTree` gets the detached grandchildren, with a hostile-server test proving all three layers). Note: the SDK's zod graph hit OneDrive cloud-placeholder hangs on this machine — fixed by re-extracting the placeholder files from the npm tarball. The book's "MCP queued, not shipped" gap on Guppy's card is now closed.
+4. **Launch gate** (from `LAUNCH_CHECKLIST`): a clean 20-fixture free-tier run — the earlier Gemini 4/20 was contaminated by the now-fixed silent-failure bug; Groq qwen3.6-27b hit 20/20 by rotating 3 keys.
+
+### Restart commands
+
+```bash
+cd guppy
+pnpm -r run build && pnpm -r run test   # full verification (~1–2 min)
+pnpm cli -- chat --local                # chat TUI (from the guppy root)
+pnpm cli -- setup                       # re-run wizard if needed
+```
+
+`pnpm cli` only resolves from the **guppy root**. From a subdirectory use `pnpm --filter @guppy/control-plane start chat --local`.
+
+### Gotchas (learned the hard way today)
+
+- **OneDrive eats new files** — `write_file` on new `apps/`/`packages/` paths failed or silently vanished all session; the workaround was writing via terminal heredocs (content identical). If a file seems missing, that's the quirk — rewrite it.
+- **Free OpenRouter models can stall** under load (the user's `:free` router). Now bounded to 60s + visible error, but if a turn "does nothing", that's the endpoint — resend or switch to Groq `qwen3.6-27b` (`/provider groq` + `/model qwen` in chat).
+- Worktrees live at `~/.guppy/worktrees` now (outside OneDrive) — old ones under `<repo>/.guppy/worktrees` can be deleted.
+- A non-git repo (like `apps/control-plane`) uses the plain-copy path; the copy **excludes `node_modules`**, so gates like `tsc`/`vitest` get skipped in that worktree (works fine in git repos with installed deps).
+
+### Side project — the book
+
+We're incubating **the source book on harness engineering** — a classification axis + one-page "Harness Card" format + decision framework for Claude Code / Prime / Hermes / Antigravity / OpenClaw / Guppy, with this repo as the fully-dissected example. Blueprint: [`docs/HARNESS-BOOK.md`](HARNESS-BOOK.md) · in-depth working plan: [`docs/BOOK-MASTER-PLAN.md`](BOOK-MASTER-PLAN.md). Not on the product roadmap — the product is the book's lab, and every milestone donates a chapter section.
+
+---
+
 **Headline:** The learn → act → verify → remember loop is **working and proven against a real model**, and the product loop is now closed — a successful run **merges the agent's changes back into your repo**. Resilience (resume, retry), feel (streaming, chat), tools (search/apply_patch/git), skills (loader + `guppy skill add`), and the **Docker sandbox** (built + container-mode e2e) are shipped; what remains is proving the loop at scale on **free-tier / open-weight models** (no paid key required — the launch target is exactly a student/individual budget).
 
 ---
@@ -171,7 +230,7 @@ Exponential backoff with jitter on 429/5xx/network errors, Retry-After aware, CL
 Native `search` (ripgrep-backed, with a substring fallback when rg is missing), diff-aware `apply_patch` (unified diff, fuzzy context matching, path containment, multi-file `FileChanged`), and `git_status`/`git_diff`. prime-agent's `ipython` tool stays out — a Windows liability.
 
 ### 5.6 ~~Skills are stubbed~~ — ✅ done
-`<repo>/.guppy/skills/*.md` skills (front-matter `name`/`description`/`tags` + prompt body) are loaded by `loadSkills`, written by `saveSkill`, selected per-task by the context engine's `selectSkills`, and rendered into the runtime system prompt. Authoring is a first-class CLI command: `guppy skill add <name> <description> [--tags a,b] [--prompt "…"]`, with `guppy skill list` to inspect what a repo teaches.
+`<repo>/.guppy/skills/*.md` skills (front-matter `name`/`description`/`tags` + prompt body) are loaded by `loadSkills`, written by `saveSkill`, selected per-task by the context engine's `selectSkills`, and rendered into the runtime system prompt. Authoring is a first-class CLI command: `guppy skill add <name> <description> [--tags a,b] [--prompt "…"]`, with `guppy skill list` to inspect what a repo teaches. **Distributed skills (Slice 5):** `guppy skill install <name|url|path> [--registry <ref>] [--force]` fetches a skill (builtin registry / URL / local file), validates it, and writes it to `~/.guppy/skills` with `source:`/`installed-at:` provenance; `guppy skill remove <name>` deletes it (per-user first, then the repo dir). Installed skills are merged into every run/chat context by the session manager (repo skills win collisions), so they follow the user across repos.
 
 ### 5.7 Per-repo memory only
 Memory roots at `<repo>/.guppy/memory`. Cross-repo/shared knowledge is not wired.
@@ -201,6 +260,7 @@ Memory roots at `<repo>/.guppy/memory`. Cross-repo/shared knowledge is not wired
 | 2 fixtures (bugfix-clamp/sum) | gemini-2.5-flash (Google AI Studio free) | guppy-core | ✅ 2/2 PASS, 1 attempt each (`smoke-gem`) |
 | 20 fixtures (full suite) | gemini-2.5-flash (Google AI Studio free) | guppy-core | ❌ 4/20 PASS — 16 misses recorded 0 tokens (model-client errors silently masked as gate failures; §7 #13, now fixed) |
 | 2 fixtures | qwen2.5-coder:1.5b (local Ollama) | guppy-core | 0/2 — loop ran fully (test → tools → gate → retry), model too weak to fix |
+| 3 fixtures (bugfix-clamp/sum/average) × {guppy-core, guppy-core-skill} | nemotron-3-super-120b (OpenRouter free) | **skill A/B** | ✅ 6/6 PASS (3/3 each, 1 attempt) — **+0pp pass rate, +9,894 tokens** (81,549 → 91,443): the generic builtin starter skills (code-review/write-tests/commit-hygiene/refactor-rename) were injected into every context but did not change outcomes on fixtures the model already solves; task-specific skills that carry the actual fix DO flip gates — proven hermetically by `guppy-bench skill-demo`. Artifacts: `docs/bench-results/skill-ab-nemotron/` |
 | 2 fixtures | qwen2.5-coder:1.5b (local Ollama) | guppy-prime | 0/2, **0 tokens** — prime-agent never reached the model (provider hang) |
 
 Artifacts: every recorded run's `results.json` + `report.md` is committed under `docs/bench-results/<run>/`; the live runtime state under `.guppy/` (event stores, memory, worktrees) is gitignored.
@@ -223,6 +283,8 @@ Artifacts: every recorded run's `results.json` + `report.md` is committed under 
 12. **Groq llama-3.x answers tool requests as `<function/name>{…}</function>` text** (fixed) — the client only understood a single fenced-JSON object, so a model that emits tool calls as multi-block text (llama-3.3-70b on Groq does this ~40% of the time) was treated as a plain answer and the run "succeeded" without editing anything. The fallback now parses every `<function/name>`, `<function(name)>`, `<function(name){`, and `<function.name>` variant into tool calls (regression-tested against captured real responses; `bugfix-clamp` went 0/2 → PASS after the fix).
 13. **Model-client errors were silently recorded as 0-token gate failures** (fixed) — when the OpenAI client threw (429 after retries, network, 4xx), `CoreAgentRuntime` marked the trajectory `failure` with 0 tokens and *no* `ModelCalled` event, and the bench runner then ran the verification gate on top, so `results.json` recorded the gate's red output instead of the real cause. The `gem-full` Gemini 2.5 Flash run (4/20) is contaminated by this: all 16 misses were actually model-client errors, not agent outcomes. Fixed: the runtime now records the error on `TrajectoryCompleted` and the `Trajectory`, and the bench treats a 0-token failure trajectory that carries an error as a loud infrastructure failure — the same class as the prime spawn fix (#3).
 14. **Code-review hardening** (fixed) — per-request model timeout so a hung endpoint can't stall a run; realpath symlink defense in workspace path containment (a container-created symlink could redirect host-side file tools outside the worktree); event-store writes switched to synchronous fd writes (no dropped backpressure, durable before listeners fire) and session-switch finalization; merge-back `filesChanged` now counts actual new/modified/deleted files instead of the whole tree; container exec timeout now destroys its stream and truncated docker frames error instead of silently truncating.
+15. **`guppy-core-skill` silently routed to the prime runtime** (fixed, 2026-08-19) — the new bench config's runtime branch was `config === 'guppy-core' ? core : prime`, so `guppy-core-skill` fell through to `PrimeDaemonRuntime` and the skill A/B was actually core-vs-prime. Caught on the first real run by the `[PrimeDaemon]` log lines; fixed by routing both core configs to `createCoreRuntime` and pinned with a regression test that hits an unreachable endpoint and asserts the core-style `Model request failed` (a prime run would fail with a spawn error instead).
+16. **Context-engine `extractKeywords` didn't strip backticks** (fixed, 2026-08-19) — a task mentioning `` `clamp` `` produced the keyword "`clamp`" (with backticks), so a skill about `clamp` never matched and skills were silently dropped from context — the exact scenario the skill A/B measures. The keyword split now includes the backtick; exposed by `guppy-bench skill-demo` and covered by the demo + context-engine tests.
 
 ---
 
