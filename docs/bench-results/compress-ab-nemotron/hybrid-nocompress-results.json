@@ -1,0 +1,47 @@
+{
+  "generatedAt": "2026-08-19T11:54:41.127Z",
+  "model": "nvidia/nemotron-3-super-120b-a12b:free",
+  "configs": [
+    "guppy-core"
+  ],
+  "maxAttempts": 1,
+  "retry": {
+    "maxRetries": 2,
+    "baseDelayMs": 500,
+    "maxDelayMs": 30000
+  },
+  "results": [
+    {
+      "config": "guppy-core",
+      "taskId": "longhorizon-ledger",
+      "kind": "bugfix",
+      "wallTimeMs": 167818,
+      "tokensTotal": 866731,
+      "toolCalls": 14,
+      "fixtureDir": "C:\\Users\\ABHIJEET BAUG\\OneDrive\\Desktop\\Projects\\Harness\\guppy\\apps\\bench-runner\\.guppy\\bench\\hybrid-ab\\no-compress\\fixtures\\guppy-core\\longhorizon-ledger",
+      "passed": false,
+      "attempts": [
+        {
+          "attempt": 1,
+          "wallTimeMs": 167663,
+          "tokens": 866731,
+          "toolCalls": 14,
+          "verified": false,
+          "errorSummary": "  'test: '"
+        }
+      ],
+      "error": "  'test: '",
+      "contextHealth": {
+        "files": 15,
+        "scoreMin": 57,
+        "scoreMax": 71,
+        "scoreAvg": 62.5,
+        "ciStatus": "FAIL",
+        "totalTokens": 679740,
+        "wastedTokens": 386597,
+        "tokensSaved": 386544,
+        "tool": "contextops@0.1.0"
+      }
+    }
+  ]
+}

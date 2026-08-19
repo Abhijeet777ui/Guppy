@@ -154,6 +154,8 @@ export interface TrajectoryMetrics {
   checkpoints: number;
   contextSelections: number;
   verificationEscalations: number;
+  /** How many times the runtime compressed the conversation history (long runs). */
+  compressions?: number;
 }
 
 // ============================================================================
@@ -166,6 +168,7 @@ export type EventType =
   | 'ModelCalled'
   | 'ModelStreamed'
   | 'FinalAnswer'
+  | 'ContextCompressed'
   | 'ToolCalled'
   | 'ToolReturned'
   | 'FileChanged'
@@ -234,6 +237,23 @@ export interface FinalAnswerEvent extends BaseEvent {
   payload: {
     /** The model's final prose answer (recorded when the loop ends with no tool calls). */
     text: string;
+  };
+}
+
+export interface ContextCompressedEvent extends BaseEvent {
+  type: 'ContextCompressed';
+  payload: {
+    /** Model turns replaced by the recap. */
+    turnsCompressed: number;
+    messagesBefore: number;
+    messagesAfter: number;
+    /** Estimated history tokens before/after (chars/4 heuristic). */
+    tokensBefore: number;
+    tokensAfter: number;
+    /** How the recap body was produced (deterministic default; 'llm' when the optional summarizer ran). */
+    summarySource?: 'deterministic' | 'llm';
+    /** Tokens consumed by the optional LLM summarizer call (0 when deterministic). */
+    summaryTokens?: number;
   };
 }
 
@@ -374,6 +394,7 @@ export type Event =
   | ModelCalledEvent
   | ModelStreamedEvent
   | FinalAnswerEvent
+  | ContextCompressedEvent
   | ToolCalledEvent
   | ToolReturnedEvent
   | FileChangedEvent

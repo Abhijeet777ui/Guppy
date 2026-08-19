@@ -15,7 +15,7 @@ import { join } from 'node:path';
 import { now, ulid, type Context, type Task } from '@guppy/contracts';
 import { createEventStore } from '@guppy/event-store';
 import { createWorkspaceManager } from '@guppy/workspace';
-import { createCoreRuntime } from '../src/index.js';
+import { COMPRESSED_HISTORY_HEADER, createCoreRuntime } from '../src/index.js';
 
 const tmpDirs: string[] = [];
 afterAll(() => {
@@ -277,6 +277,73 @@ describe('CoreAgentRuntime (hermetic)', () => {
       ).toEqual(['apply_patch', 'git_diff', 'git_status', 'list_files', 'read_file', 'run_command', 'search', 'write_file']);
       expect(Array.isArray(firstCapture.messages)).toBe(true);
       expect(firstCapture.messages[0]?.role).toBe('system');
+
+      await eventStore.close();
+      await wm.destroyWorkspace(workspace.id);
+    } finally {
+      await close(mock.server);
+    }
+  });
+
+  it('compresses history on long runs so the model window is never blown', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'guppy-core-compress-'));
+    tmpDirs.push(dir);
+    const fixtureDir = join(dir, 'fixture');
+    mkdirSync(fixtureDir, { recursive: true });
+    // Big file so every read_file returns a large (truncated) tool result.
+    writeFileSync(join(fixtureDir, 'big.txt'), 'z'.repeat(60_000), 'utf8');
+
+    // Four tool turns reading the big file, then a final answer.
+    const responses: unknown[] = [];
+    for (let i = 0; i < 4; i++) {
+      responses.push(toolChoice(`call-${i}`, 'read_file', { path: 'big.txt' }, { input: 100, output: 20 }));
+    }
+    responses.push({
+      model: 'fake/nemotron',
+      choices: [{ message: { role: 'assistant', content: 'Done.' }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 30, completion_tokens: 8 },
+    });
+
+    const mock = startMock(responses);
+    const url = await listen(mock.server);
+
+    try {
+      const eventStore = createEventStore({ rootDir: join(dir, 'events') });
+      const wm = createWorkspaceManager({ useContainers: false, worktreeBase: join(dir, 'worktrees') });
+      const workspace = (await wm.createWorkspace(fixtureDir)).value;
+
+      const runtime = createCoreRuntime({
+        eventStore,
+        workspaceManager: wm,
+        model: { provider: 'fake', model: 'fake/nemotron', baseUrl: url },
+        maxTurns: 10,
+        // Tiny budget: each ~5k-token read_file result blows it immediately,
+        // so the recap must fire mid-run.
+        maxHistoryTokens: 2_000,
+        historyKeepRecentTurns: 1,
+      });
+      await runtime.initialize(workspace);
+
+      const task = makeTask();
+      const result = await runtime.run(task, makeContext(task.id));
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      // At least one request the model actually received contained the recap.
+      const seenCompressed = mock.requests.some((r) =>
+        JSON.stringify(r.body).includes(COMPRESSED_HISTORY_HEADER),
+      );
+      expect(seenCompressed).toBe(true);
+
+      const traj = result.value;
+      const compressed = traj.events.filter((e) => e.type === 'ContextCompressed');
+      expect(compressed.length).toBeGreaterThan(0);
+      const first = compressed[0] as unknown as {
+        payload: { turnsCompressed: number; tokensBefore: number; tokensAfter: number };
+      };
+      expect(first.payload.turnsCompressed).toBeGreaterThan(0);
+      expect(first.payload.tokensAfter).toBeLessThan(first.payload.tokensBefore);
+      expect(traj.metrics.compressions).toBe(compressed.length);
 
       await eventStore.close();
       await wm.destroyWorkspace(workspace.id);

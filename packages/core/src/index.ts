@@ -29,5 +29,15 @@ export type {
   ToolExecution,
 } from './tools.js';
 export { buildGuppyTools } from './tools.js';
-export type { CoreRuntimeConfig } from './runtime.js';
+export type { CoreRuntimeConfig, HistorySummarizerConfig } from './runtime.js';
 export { CoreAgentRuntime, createCoreRuntime } from './runtime.js';
+export {
+  compressMessages,
+  estimateMessageTokens,
+  COMPRESSED_HISTORY_HEADER,
+  RECAP_LATEST_RESULT_CHARS,
+} from './compress.js';
+export type {
+  CompressionOptions,
+  CompressionResult,
+} from './compress.js';

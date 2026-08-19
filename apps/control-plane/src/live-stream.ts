@@ -78,6 +78,16 @@ export function renderLiveEvent(event: Event): string | null {
       const p = event.payload as { path?: string; operation?: string };
       return chalk.magenta(`[file] ${p.operation ?? 'modify'} ${p.path ?? ''}`);
     }
+    case 'ContextCompressed': {
+      const p = event.payload as {
+        turnsCompressed?: number;
+        tokensBefore?: number;
+        tokensAfter?: number;
+      };
+      return chalk.yellow(
+        `[compress] ${p.turnsCompressed ?? 0} turn(s) (${p.tokensBefore ?? '?'} -> ${p.tokensAfter ?? '?'} est. tok)`,
+      );
+    }
     case 'TestStarted': {
       const p = event.payload as { name?: string };
       return chalk.gray(`[test] ${p.name ?? ''}`);

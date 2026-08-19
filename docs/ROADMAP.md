@@ -1,6 +1,6 @@
 # Guppy Roadmap — the complete work list
 
-**Branch:** `feature/nexus` · **Last updated:** 2026-08-17
+**Branch:** `feature/nexus` · **Last updated:** 2026-08-19
 
 This is the single source of truth for everything left to do: the original
 prime/pi reuse slices **and** the new top-priority UX quality track, plus the
@@ -11,9 +11,10 @@ checked off as they land.
 model catalog + thinking levels + per-user config/setup wizard + a rebuilt
 TUI (pi-tui `Editor` + slash-command autocomplete) are shipped; plan/build
 mode indicator stubs are in the context bar; a headless screen-dump harness
-renders the real TUI's output into screen grids; full suite **270 tests**
+renders the real TUI's output into screen grids; full suite **280 tests**
 green (Slice 5 distributed skills + cross-repo memory + the skill-impact
-bench A/B and `guppy-bench skill-demo` shipped; see STATUS §0).
+bench A/B and `guppy-bench skill-demo` + context compression for long
+horizons shipped; see STATUS §0).
 
 ---
 
@@ -28,6 +29,8 @@ bench A/B and `guppy-bench skill-demo` shipped; see STATUS §0).
 | 3 | **TUI interface** | 🔄 superseded by Track B (M1–M3) |
 | 4 | **Plan / build modes** — plan phase + plan gate + approval | ✅ done (Slice 4, 2026-08-18) |
 | 5 | **Distributed skills** — `guppy skill install/list/remove` | ✅ done (Slice 5, 2026-08-19) |
+| 5.5 | **Long-horizon context compression** — rolling recap, `--max-history-tokens`, `ContextCompressed` event | ✅ done (2026-08-19) |
+| 5.6 | **Hybrid recap** — capped-verbatim latest tool result + optional LLM summarizer (`--history-summary llm`, deterministic fallback) | ✅ done (2026-08-19) |
 | 6 | Parity polish — cache-aware accounting, multimodal, provider presets | ⏳ optional |
 
 ---

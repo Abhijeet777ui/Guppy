@@ -30,6 +30,34 @@ import type { ChatMessage, CompletionResult } from './openai-client.js';
 import type { ModelConfig } from './model.js';
 import { CancelledError, OpenAIChatClient } from './openai-client.js';
 import { buildGuppyTools, READ_ONLY_TOOL_NAMES, type GuppyTool, type ToolExecution } from './tools.js';
+import {
+  COMPRESSED_HISTORY_HEADER,
+  compressMessages,
+  estimateMessageTokens,
+  type CompressionResult,
+} from './compress.js';
+
+/** Default history budget (estimated tokens) before the recap kicks in. */
+const DEFAULT_MAX_HISTORY_TOKENS = 60_000;
+/**
+ * Default number of most-recent model turns kept verbatim after a compression.
+ * 2 (not 6): the 2026-08-19 A/B showed keep-6 exempted ~6 turns from the budget
+ * and made compression *cost* tokens on re-read-heavy tasks (STATUS bug #17).
+ */
+const DEFAULT_HISTORY_KEEP_RECENT_TURNS = 2;
+
+/** Optional LLM summarization of the compressed history (hybrid recap). */
+export interface HistorySummarizerConfig {
+  /** Model for the summary call; defaults to the main model. */
+  model?: ModelConfig;
+  /** Max chars of the older turns sent to the summarizer (default 40_000). */
+  maxInputChars?: number;
+  /** Max completion tokens for the summary (default 1000). */
+  maxSummaryTokens?: number;
+}
+
+const SUMMARIZER_SYSTEM_PROMPT =
+  'Summarize the following agent conversation history into a compact recap for a coding agent that is about to continue the same task. Preserve: the original task, decisions made, key findings (file names, function names, error messages, test results), what has been tried and its result, what remains to be done, and the latest state of any file that was read or edited. Be concise and factual; do not invent details that are not in the transcript.';
 
 export interface CoreRuntimeConfig {
   eventStore: EventStore;
@@ -62,6 +90,22 @@ export interface CoreRuntimeConfig {
    * and result plumbing as the built-ins.
    */
   extraTools?: GuppyTool[];
+  /**
+   * Long-horizon guard: when the estimated conversation-history tokens exceed
+   * this budget, the older turns are replaced by a compact recap (the most
+   * recent `historyKeepRecentTurns` stay verbatim). Default 60_000; 0 disables.
+   */
+  maxHistoryTokens?: number;
+  /** Model turns kept verbatim when history compression fires. Default 2. */
+  historyKeepRecentTurns?: number;
+  /**
+   * Optional LLM summarization of the compressed history (hybrid recap). When
+   * set, each compression replaces the deterministic recap body with a compact
+   * semantic summary from a summarizer model, falling back to the deterministic
+   * recap on any error. Off by default — deterministic-only is the offline,
+   * zero-cost floor.
+   */
+  historySummarizer?: HistorySummarizerConfig;
 }
 
 const MAX_TOOL_RESULT_CHARS = 20_000;
@@ -123,6 +167,7 @@ export class CoreAgentRuntime implements AgentRuntime {
 
     let tokensTotal = 0;
     let toolCalls = 0;
+    let compressions = 0;
     const tokensByModel: Record<string, number> = {};
     let finished = false;
     let lastError = '';
@@ -135,6 +180,18 @@ export class CoreAgentRuntime implements AgentRuntime {
         if (signal?.aborted) {
           cancelled = true;
           break;
+        }
+        // Long-horizon guard: once the history exceeds the budget, replace the
+        // older turns with a recap so the model window is never blown.
+        const compressed = await this.maybeCompressHistory(messages, task.id, sessionId, signal);
+        if (compressed) {
+          compressions++;
+          if (compressed.summary) {
+            const delta = compressed.summary.inputTokens + compressed.summary.outputTokens;
+            tokensTotal += delta;
+            tokensByModel[compressed.summary.model] = (tokensByModel[compressed.summary.model] ?? 0) + delta;
+          }
+          emit(compressed.event);
         }
         this.captureContext(messages, turn, startedAt);
         const callId = ulid();
@@ -301,6 +358,7 @@ export class CoreAgentRuntime implements AgentRuntime {
       checkpoints: 0,
       contextSelections: 0,
       verificationEscalations: 0,
+      ...(compressions > 0 ? { compressions } : {}),
     };
 
     emit({
@@ -347,6 +405,112 @@ export class CoreAgentRuntime implements AgentRuntime {
   async shutdown(): Promise<void> {
     // Nothing to release: the client is stateless and the workspace is owned
     // by the caller (SessionManager).
+  }
+
+  /**
+   * Long-horizon guard: if the estimated history is over budget, compress the
+   * older turns into a recap (mutating `messages` in place). With the optional
+   * summarizer enabled, the deterministic recap body is then replaced by a
+   * semantic LLM summary (falling back to the deterministic recap on error).
+   * Returns the `ContextCompressed` event for the caller to emit, plus any
+   * summarizer usage to fold into the trajectory's token totals.
+   */
+  private async maybeCompressHistory(
+    messages: ChatMessage[],
+    taskId: ULID,
+    sessionId: ULID,
+    signal?: AbortSignal,
+  ): Promise<{
+    event: Event;
+    summary?: { model: string; inputTokens: number; outputTokens: number };
+  } | null> {
+    const budget = this.config.maxHistoryTokens ?? DEFAULT_MAX_HISTORY_TOKENS;
+    if (budget <= 0) return null;
+    const before = messages.length;
+    const tokensBefore = estimateMessageTokens(messages.slice(1));
+    if (tokensBefore <= budget) return null;
+
+    const result = compressMessages(messages, {
+      maxHistoryTokens: budget,
+      keepRecentTurns: this.config.historyKeepRecentTurns ?? DEFAULT_HISTORY_KEEP_RECENT_TURNS,
+    });
+    if (result.compressedTurns === 0) return null;
+
+    messages.length = 0;
+    messages.push(...result.messages);
+
+    let summarySource: 'deterministic' | 'llm' = 'deterministic';
+    let summary: { model: string; inputTokens: number; outputTokens: number } | undefined;
+    if (this.config.historySummarizer) {
+      try {
+        const s = await this.summarizeHistory(result, signal);
+        if (s) {
+          summary = { model: s.model, inputTokens: s.inputTokens, outputTokens: s.outputTokens };
+          if (s.text !== '') {
+            messages[1] = { role: 'system', content: `${COMPRESSED_HISTORY_HEADER} (LLM summary)\n\n${s.text}` };
+            summarySource = 'llm';
+          }
+        }
+      } catch {
+        // The deterministic recap is the fallback; compression already succeeded.
+      }
+    }
+
+    const tokensAfter = estimateMessageTokens(messages);
+    const summaryTokens = summary ? summary.inputTokens + summary.outputTokens : 0;
+    console.log(
+      `[CoreAgentRuntime] compressed ${result.compressedTurns} turn(s) of history (${result.tokensBefore} -> ${tokensAfter} est. tokens, ${summarySource}${summaryTokens > 0 ? `, +${summaryTokens} summary tok` : ''})`,
+    );
+    return {
+      event: {
+        id: ulid(),
+        timestamp: now(),
+        type: 'ContextCompressed',
+        taskId,
+        sessionId,
+        payload: {
+          turnsCompressed: result.compressedTurns,
+          messagesBefore: before,
+          messagesAfter: messages.length,
+          tokensBefore: result.tokensBefore,
+          tokensAfter,
+          summarySource,
+          ...(summaryTokens > 0 ? { summaryTokens } : {}),
+        },
+      },
+      ...(summary ? { summary } : {}),
+    };
+  }
+
+  /**
+   * One LLM call turning the compressed turns into a semantic recap. Returns
+   * the summary text + usage, or null when the summarizer produced no text.
+   */
+  private async summarizeHistory(
+    result: CompressionResult,
+    signal?: AbortSignal,
+  ): Promise<{ text: string; model: string; inputTokens: number; outputTokens: number } | null> {
+    const cfg = this.config.historySummarizer!;
+    const modelConfig: ModelConfig = {
+      ...(cfg.model ?? this.config.model),
+      ...(cfg.maxSummaryTokens !== undefined ? { maxTokens: cfg.maxSummaryTokens } : { maxTokens: 1_000 }),
+    };
+    const client = new OpenAIChatClient(modelConfig);
+    const transcript = buildSummarizerTranscript(result.older, cfg.maxInputChars ?? 40_000);
+    const completion = await client.complete(
+      [
+        { role: 'system', content: SUMMARIZER_SYSTEM_PROMPT },
+        { role: 'user', content: transcript },
+      ],
+      undefined,
+      signal,
+    );
+    return {
+      text: completion.content?.trim() ?? '',
+      model: completion.model,
+      inputTokens: completion.usage.inputTokens,
+      outputTokens: completion.usage.outputTokens,
+    };
   }
 
   /**
@@ -423,6 +587,40 @@ export class CoreAgentRuntime implements AgentRuntime {
 
     return parts.join('\n');
   }
+}
+
+/**
+ * Render the compressed turns as a flat transcript for the summarizer, capped
+ * at `maxChars` so a run full of big tool results can't blow the summarizer's
+ * own context window.
+ */
+function buildSummarizerTranscript(older: ChatMessage[], maxChars: number): string {
+  const parts: string[] = [];
+  let used = 0;
+  for (const message of older) {
+    let line = '';
+    if (message.role === 'user') {
+      line = `USER: ${message.content ?? ''}`;
+    } else if (message.role === 'assistant') {
+      line =
+        message.tool_calls && message.tool_calls.length > 0
+          ? `ASSISTANT ran: ${message.tool_calls
+              .map((c) => `${c.function.name}(${truncate(c.function.arguments, 200)})`)
+              .join('; ')}`
+          : `ASSISTANT: ${message.content ?? ''}`;
+    } else if (message.role === 'tool') {
+      line = `TOOL ${message.name ?? ''}: ${message.content ?? ''}`;
+    } else {
+      continue;
+    }
+    if (used + line.length > maxChars) {
+      parts.push(`${line.slice(0, Math.max(0, maxChars - used))}…[truncated]`);
+      break;
+    }
+    parts.push(line);
+    used += line.length + 1;
+  }
+  return parts.join('\n');
 }
 
 function parseArgs(json: string): Record<string, unknown> {

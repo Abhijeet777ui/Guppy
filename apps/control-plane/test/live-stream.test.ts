@@ -89,6 +89,21 @@ describe('renderLiveEvent', () => {
       stripAnsi(renderLiveEvent(ev('VerificationEscalated', { fromLevel: 1, toLevel: 3, reason: 'unit failed' }))!),
     ).toContain('[gate] escalated level 1 -> 3');
   });
+
+  it('renders context compression', () => {
+    const line = stripAnsi(
+      renderLiveEvent(
+        ev('ContextCompressed', {
+          turnsCompressed: 12,
+          messagesBefore: 40,
+          messagesAfter: 18,
+          tokensBefore: 96_000,
+          tokensAfter: 21_000,
+        })!,
+      ),
+    );
+    expect(line).toContain('[compress] 12 turn(s) (96000 -> 21000 est. tok)');
+  });
 });
 
 describe('attachLiveStream', () => {
