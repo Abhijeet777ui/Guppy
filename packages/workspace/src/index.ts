@@ -537,7 +537,16 @@ export class WorkspaceManager {
       // the caller explicitly forces it.
       if (options.noCommit && info.branch && !options.force) {
         const { stdout } = await execa('git', ['status', '--porcelain'], { cwd: info.repoPath });
-        if (stdout.trim() !== '') {
+        // `.guppy` is guppy's own run state (events, checkpoints, context
+        // captures) written into the repo by this very run — it is
+        // infrastructure, never user work, and mirrorDirectory already skips
+        // it. Count it out of the dirty check so a run can't refuse to merge
+        // its own changes back (same treatment the commit path gives
+        // node_modules). Real uncommitted user edits still block the overlay.
+        const dirty = stdout
+          .split('\n')
+          .some((line) => line.trim() !== '' && !line.includes('.guppy'));
+        if (dirty) {
           return err(
             new Error(
               'Refusing to overlay changes onto a dirty working tree — commit or stash your changes first (or pass --force to overwrite)',
