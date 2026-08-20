@@ -956,6 +956,10 @@ export class WorkspaceManager {
       const stream = await exec.start({ hijack: true, stdin: false });
       let timer: NodeJS.Timeout | undefined;
       const run = this.readStream(stream).then((io) => io, (e: unknown) => e);
+      // Mirror execLocal's default: a missing explicit timeout must fall back
+      // to the config default, not fire immediately (setTimeout(fn, undefined)
+      // runs on the next tick — every model run_command would die instantly).
+      const timeoutMs = options.timeout ?? this.config.timeout;
       const result = await Promise.race([
         run,
         new Promise<unknown>((resolve) => {
@@ -965,10 +969,10 @@ export class WorkspaceManager {
               // error) instead of leaking an open stream until the container
               // is torn down. The exec process keeps running inside the
               // sandbox; destroyWorkspace reaps it.
-              stream.destroy(new Error(`container exec timed out after ${options.timeout}ms`));
-              resolve(new Error(`container exec timed out after ${options.timeout}ms`));
+              stream.destroy(new Error(`container exec timed out after ${timeoutMs}ms`));
+              resolve(new Error(`container exec timed out after ${timeoutMs}ms`));
             },
-            options.timeout,
+            timeoutMs,
           );
         }),
       ]);
