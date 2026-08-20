@@ -13,7 +13,7 @@
 
 import { describe, expect, it, afterAll } from 'vitest';
 import { execSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildInstallCommand, createWorkspaceManager } from '../src/index.js';
@@ -122,6 +122,43 @@ describe('workspace dependency provisioning', () => {
     const tracked = execSync('git ls-files', { cwd: repoPath, encoding: 'utf8' });
     expect(tracked).not.toContain('node_modules');
     expect(readFileSync(join(repoPath, 'src', 'main.ts'), 'utf8')).toContain('x = 2');
+  });
+
+  it('re-links node_modules on adopt when the worktree carries an empty node_modules artifact', async () => {
+    // `npx --no-install` / `npm run` inside the sandbox create an EMPTY
+    // node_modules in the worktree as a side effect. A naive "dir exists"
+    // check mistakes it for deps and skips the source link — the resumed-run
+    // gate regression (container e2e: resume test). Adopt must clear the
+    // artifact and re-link so tools still resolve.
+    const base = mkdtempSync(join(tmpdir(), 'guppy-deps-empty-nm-'));
+    tmpDirs.push(base);
+    const repoPath = join(base, 'repo');
+    writeFixtureWithDeps(repoPath);
+
+    const mgr = createWorkspaceManager({ useContainers: false, worktreeBase: join(base, 'worktrees') });
+    const created = await mgr.createWorkspace(repoPath);
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const { id, worktreePath } = created.value;
+
+    // Replace the fresh link with the empty artifact (as a prior run left it).
+    const nm = join(worktreePath!, 'node_modules');
+    rmSync(nm, { recursive: true, force: true });
+    mkdirSync(nm, { recursive: true });
+    expect(readdirSync(nm)).toHaveLength(0);
+
+    const adopted = await mgr.adoptWorkspace(id, worktreePath!, repoPath);
+    expect(adopted.ok).toBe(true);
+    if (!adopted.ok) return;
+    expect(existsSync(join(nm, '.bin', 'hello'))).toBe(true);
+
+    const res = await mgr.exec(id, ['npm', 'run', 'hello']);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.value.exitCode).toBe(0);
+    expect(res.value.stdout).toContain('hello from node_modules');
+
+    await mgr.destroyWorkspace(id);
   });
 
   it('buildInstallCommand never writes a package-lock.json when the repo has none', () => {

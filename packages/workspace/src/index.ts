@@ -296,12 +296,21 @@ export class WorkspaceManager {
     const sourceNodeModules = join(workspace.repoPath, 'node_modules');
     const worktreeNodeModules = join(worktreePath, 'node_modules');
 
-    if (!this.config.useContainers && existsSync(sourceNodeModules) && !existsSync(worktreeNodeModules)) {
+    if (!this.config.useContainers && existsSync(sourceNodeModules) && !this.hasRealNodeModules(worktreeNodeModules)) {
+      // An empty node_modules dir (a previous npx/npm run's side effect, see
+      // buildBinds) would block the junction/symlink — clear it first.
+      if (existsSync(worktreeNodeModules)) {
+        try {
+          rmSync(worktreeNodeModules, { recursive: true, force: true });
+        } catch {
+          // Best-effort; linkNodeModules logs its own failure.
+        }
+      }
       this.linkNodeModules(sourceNodeModules, worktreeNodeModules);
       return;
     }
 
-    if (existsSync(worktreeNodeModules) || !this.config.installDependencies) return;
+    if (this.hasRealNodeModules(worktreeNodeModules) || !this.config.installDependencies) return;
     // Source node_modules exists (mounted in container mode) — the link/mount
     // path already covers deps; don't re-install.
     if (existsSync(sourceNodeModules)) return;
@@ -323,6 +332,22 @@ export class WorkspaceManager {
       return;
     }
     console.log('[Workspace] Dependencies installed in the workspace');
+  }
+
+  /**
+   * True when a directory carries an actual dependency tree (any entries).
+   * `npx --no-install` / `npm run` inside the sandbox create an EMPTY
+   * node_modules in the worktree as a side effect, so "dir exists" is not
+   * "deps present" — an empty dir must not suppress the source mount/link
+   * (resumed runs would lose tsc/eslint and fail their gates).
+   */
+  private hasRealNodeModules(dir: string): boolean {
+    if (!existsSync(dir)) return false;
+    try {
+      return readdirSync(dir).length > 0;
+    } catch {
+      return false;
+    }
   }
 
   /** Best-effort junction/symlink so the worktree sees the source repo's deps. */
@@ -375,7 +400,11 @@ export class WorkspaceManager {
   private buildBinds(worktreePath: string, repoPath: string): string[] {
     const binds = [`${worktreePath}:/workspace:rw`];
     const sourceNodeModules = join(repoPath, 'node_modules');
-    if (existsSync(sourceNodeModules) && !existsSync(join(worktreePath, 'node_modules'))) {
+    // `npx --no-install` / `npm run` inside the sandbox create an EMPTY
+    // node_modules in the worktree as a side effect (a Docker Desktop rw-map
+    // artifact, not an install). Treating that as "deps present" would drop
+    // the source mount and silently break every resumed run's gate.
+    if (existsSync(sourceNodeModules) && !this.hasRealNodeModules(join(worktreePath, 'node_modules'))) {
       binds.push(`${sourceNodeModules}:/workspace/node_modules:ro`);
     }
     return binds;
