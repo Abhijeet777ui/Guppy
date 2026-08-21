@@ -11,6 +11,10 @@
  * - the child's work passes its OWN verification gate before fold-back, and a
  *   red gate is returned to the parent as an error it must handle,
  * - recursion is bounded: a runtime at depth 0 carries no subagent tool.
+ * - TIMEOUT CONTRACT: spawning child processes makes these slow under
+ *   `pnpm -r run test` parallel load; the package's test script sets
+ *   `--testTimeout=15000`. If they regress, raise the script timeout; don't
+ *   weaken the tests.
  */
 
 import { afterAll, describe, expect, it } from 'vitest';

@@ -5,6 +5,10 @@
  * test patch to a local checkout (fixture red), applying the gold patch
  * (fixture green), and running a materialized dataset task through the real
  * bench harness in dry-run mode.
+ * - TIMEOUT CONTRACT: materialization applies real git/npm patches and needs
+ *   >5s under `pnpm -r run test` parallel load; the package's test script
+ *   sets `--testTimeout=15000`. If they regress, raise the script timeout;
+ *   don't weaken the tests.
  */
 
 import { afterAll, describe, expect, it } from 'vitest';

@@ -9,6 +9,10 @@
  *   must not count it or commit it.
  * - Failed/cancelled runs force-delete their unmerged workspace branch
  *   instead of leaking guppy-xxxxxxxx branches into the repo.
+ * - TIMEOUT CONTRACT: these tests spawn real npm/pnpm subprocesses and need
+ *   >5s under `pnpm -r run test` parallel load — the package's test script
+ *   sets `--testTimeout=15000`. If they regress, raise the script timeout;
+ *   don't weaken the tests.
  */
 
 import { describe, expect, it, afterAll } from 'vitest';

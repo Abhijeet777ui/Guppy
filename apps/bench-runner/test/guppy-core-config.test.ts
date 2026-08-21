@@ -2,6 +2,10 @@
  * Hermetic check that the `guppy-core` bench config is fully wired: the
  * closed-loop path materializes the fixture, creates the native core runtime,
  * runs the gate, and cleans up — all in dry-run mode (no LLM, no network).
+ * - TIMEOUT CONTRACT: this spawns the real closed loop (fixture materialize,
+ *   core runtime, gate) and needs >5s under `pnpm -r run test` parallel load;
+ *   the package's test script sets `--testTimeout=15000`. If it regresses,
+ *   raise the script timeout; don't weaken the tests.
  */
 
 import { afterAll, describe, expect, it } from 'vitest';
