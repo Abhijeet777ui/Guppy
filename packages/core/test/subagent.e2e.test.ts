@@ -12,8 +12,9 @@
  *   red gate is returned to the parent as an error it must handle,
  * - recursion is bounded: a runtime at depth 0 carries no subagent tool.
  * - TIMEOUT CONTRACT: spawning child processes makes these slow under
- *   `pnpm -r run test` parallel load; the package's test script sets
- *   `--testTimeout=15000`. If they regress, raise the script timeout; don't
+ *   `pnpm -r run test` parallel load, and the slowest CI leg (node 22 on
+ *   Windows/macOS) needs ~18s; the package's test script sets
+ *   `--testTimeout=30000`. If they regress, raise the script timeout; don't
  *   weaken the tests.
  */
 
