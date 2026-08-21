@@ -765,7 +765,11 @@ export class WorkspaceManager {
           const cp = byPrefix.get(wt.branch.toLowerCase()) ?? byPath.get(resolve(wt.path));
           let dirAgeMs: number | null = null;
           try {
-            dirAgeMs = nowMs - statSync(wt.path).mtimeMs;
+            // Clamp at 0: Date.now() is integer ms while mtimeMs is fractional,
+            // so a dir created in the same ms as nowMs can read as NEGATIVE age
+            // (e.g. mtime 1000.1, now 1000 -> -0.1). Under maxAgeDays: 0 that
+            // would wrongly count as "young" and keep the residue forever.
+            dirAgeMs = Math.max(0, nowMs - statSync(wt.path).mtimeMs);
           } catch {
             dirAgeMs = null; // registration without a directory — stale
           }
@@ -876,7 +880,10 @@ export class WorkspaceManager {
         const cp =
           byPath.get(resolve(dir)) ??
           (checkpoints.find((c) => String(c.workspaceId) === name) ?? undefined);
-        const reason = staleReason(cp, nowMs - st.mtimeMs);
+        // Clamp at 0 for the same sub-millisecond reason as the git-worktree
+        // path above: a dir born in nowMs's own millisecond must be age 0,
+        // never negative, or maxAgeDays: 0 can never sweep it.
+        const reason = staleReason(cp, Math.max(0, nowMs - st.mtimeMs));
         if (reason === '') {
           kept.push({ kind: 'plain-worktree', workspaceId: name, path: dir, reason: keepReason(cp) });
           continue;
