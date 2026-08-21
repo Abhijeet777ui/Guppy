@@ -12,7 +12,7 @@
  */
 
 import { afterAll, describe, expect, it } from 'vitest';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -177,7 +177,12 @@ describe('materializeDatasetInstance', () => {
     const tasks = loadDataset({ source: 'swe-bench', path: jsonlPath, repoDir, outDir, count: 1 });
     expect(tasks).toHaveLength(1);
     expect(tasks[0]!.id).toBe('fixture__difference');
-    expect(tasks[0]!.fixtureDir).toBe(join(outDir, 'fixtures', 'dataset', 'fixture__difference'));
+    // Compare realpaths: on macOS /var is a symlink to /private/var, so a
+    // resolved path differs textually from the join() form (same pattern as
+    // the MCP sandbox test).
+    expect(realpathSync(tasks[0]!.fixtureDir!)).toBe(
+      realpathSync(join(outDir, 'fixtures', 'dataset', 'fixture__difference')),
+    );
     expect(existsSync(tasks[0]!.fixtureDir!)).toBe(true);
   });
 
