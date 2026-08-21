@@ -712,12 +712,12 @@ export class WorkspaceManager {
       const staleReason = (cp: GcCheckpoint | undefined, dirAgeMs: number | null): string => {
         if (force) return 'forced';
         if (cp) {
-          return nowMs - cp.createdAt > maxAgeMs
+          return nowMs - cp.createdAt >= maxAgeMs
             ? `checkpoint older than ${maxAgeDays} day(s)`
             : '';
         }
         if (dirAgeMs === null) return 'no directory and no checkpoint';
-        return dirAgeMs > maxAgeMs ? `no checkpoint and directory older than ${maxAgeDays} day(s)` : '';
+        return dirAgeMs >= maxAgeMs ? `no checkpoint and directory older than ${maxAgeDays} day(s)` : '';
       };
       const keepReason = (cp: GcCheckpoint | undefined): string =>
         cp ? 'checkpoint references this workspace (resumable)' : 'younger than max-age (possibly active)';

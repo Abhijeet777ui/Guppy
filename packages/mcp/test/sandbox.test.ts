@@ -6,7 +6,7 @@
  */
 
 import { afterEach, describe, expect, it } from 'vitest';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -91,7 +91,9 @@ describe('MCP sandbox', () => {
     const report = await probe(bridge);
 
     // The server's process.cwd() is the workspace, not wherever the CLI ran.
-    expect(report.cwd).toBe(workspace);
+    // Compare realpaths: on macOS /var is a symlink to /private/var, so the
+    // child's resolved cwd differs textually from the tmpdir() path.
+    expect(realpathSync(report.cwd)).toBe(realpathSync(workspace));
     // Its relative write landed inside the workspace...
     expect(existsSync(join(workspace, 'sandbox-report.json'))).toBe(true);
     // ...and NOT in the test's own cwd (escape attempt 3 failed).
