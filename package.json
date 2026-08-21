@@ -5,6 +5,7 @@
   "private": true,
   "scripts": {
     "build": "pnpm -r run build",
+    "postbuild": "node scripts/relink-bins.mjs",
     "test": "pnpm -r run test",
     "lint": "pnpm -r run lint",
     "dev": "pnpm --filter @guppy/control-plane dev",

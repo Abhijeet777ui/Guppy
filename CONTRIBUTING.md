@@ -28,7 +28,7 @@ You don't need an API key to develop: the deterministic-first pillar means the e
 
 - **Monorepo:** pnpm workspace. Packages in `packages/` (`core`, `contracts`, `event-store`, `workspace`, `verification-engine`, `context-engine`, `memory`, `skills`, `mcp`, `models`), apps in `apps/` (`control-plane` = the CLI/TUI, `bench-runner` = `guppy-bench`, `sleep-cycle`).
 - **Per-package checks:** `pnpm --filter @guppy/core test` (or `build`) from the repo root.
-- **The bench:** `node apps/bench-runner/dist/cli.js sanity` after a build. Real-model A/Bs go in `docs/bench-results/` with the merged JSON + report. (Note: on a fresh install, the `guppy-bench` / `sleep-cycle` bin shims don't exist — pnpm creates bins at install time, before `dist/` exists, and doesn't retro-create them after `pnpm build`. Run the CLI via `node apps/bench-runner/dist/cli.js` directly, or re-run `pnpm install` after building.)
+- **The bench:** `node apps/bench-runner/dist/cli.js sanity` after a build. Real-model A/Bs go in `docs/bench-results/` with the merged JSON + report. (The `guppy-bench` / `sleep-cycle` bin shims are repaired automatically: `pnpm build` runs a `postbuild` that forces an offline re-link when they're missing — see `scripts/relink-bins.mjs`. You can also always run the CLI via `node apps/bench-runner/dist/cli.js` directly.)
 - **Dogfooding is encouraged:** Guppy is a harness — run it on its own bugs (`pnpm cli -- run "..."`).
 
 ## Good first contributions
