@@ -53,16 +53,139 @@ In exchange, Guppy promises four things no raw model loop gives you:
 
 The learn → act → verify → remember loop is **built, tested, and proven on real free-tier models**:
 
-- **Native model client + tool loop** (`@guppy/core`) - any OpenAI-compatible endpoint (OpenRouter, Groq, Google AI Studio, NVIDIA, local Ollama) with retry/backoff, streaming, and tool-call fallbacks for models that don't emit native tool calls.
-- **Gated verify → retry → memory loop** (`@guppy/control-plane`) - baseline gate, attempt, verify, feed failures into the next attempt, distill the fix into memory, merge back under the gate.
-- **The verification ladder** (`@guppy/verification-engine`) - levels 0–6, configurable per repo, missing tools are *skips with a note*, never agent faults.
-- **Benchmark harness** (`@guppy/bench-runner`) - a hermetic 21-fixture suite (zero-dependency repos, ground truth = test exit code), A/B configs, `--dry-run`, `loop-demo`, and offline failure clustering (`sleep-cycle`).
-- **Cross-repo memory + skills** - fixes distilled per repo *and* per user; skills teach conventions (`~/.guppy/skills`).
-- **Hybrid context compression** - deterministic rolling recap + optional LLM summary, measured on real models (16 compressions bounding a 47 KB-ledger run; honest numbers in `docs/live/live-compression-ab.md`).
-- **Docker sandbox** - the default launch mode with path containment and symlink defense; `--local` mode for containerless dev.
-- **Event store** - append-only trajectories with a SQLite index; `guppy replay` / `guppy trace` / live streaming.
-- **Model catalog** - 39 providers / 1,220 models, live-fetched, free-tier-first, with per-model cost/context metadata.
-- **Fullscreen TUI** - `guppy chat` on a TTY, readline REPL as the piped fallback; plan mode, `/build` approval, themes, interrupts.
+### Core Runtime (`@guppy/core`)
+
+- **Native model client + tool loop** - any OpenAI-compatible endpoint (OpenRouter, Groq, Google AI Studio, NVIDIA, local Ollama) with retry/backoff, streaming, and tool-call fallbacks for models that don't emit native tool calls.
+- **Rate limiting** - built-in `RateLimiter` with configurable windows and burst limits to avoid hitting provider quotas.
+- **Subagent support** - hierarchical agent execution with configurable depth (default max 3 levels), child turn limits (default 6), and verification timeouts (default 5 minutes). Agents can spawn sub-agents for parallel work.
+- **Tool framework** - workspace-aware tools (read, write, search, exec, patch) with read-only tool classification for safe parallel execution.
+
+### Context Engine (`@guppy/context-engine`)
+
+- **Repo map** - builds a token-efficient summary of the repository structure: files, line counts, exports, and relationships.
+- **Smart file selection** - scores files by error relevance, test failure proximity, task keyword overlap, file type, and conversation continuity. Always includes files with errors; stops at 70% token budget.
+- **Memory selection** - relevance scoring with recency boost (0.3 for <1 hour, 0.2 for <24 hours) and error-text matching. Top 10 memories included.
+- **Skill selection** - tag-based matching with task keyword overlap. Top 5 skills included.
+- **Cache-aware packing** - static sections (repo map, skills) packed first for prefix caching; dynamic sections (files, errors, tests) last. Cache-boundary aligned to maximize hit rates across turns.
+- **Token budget management** - tiktoken-based estimation with file truncation when budget exceeded. Truncates largest files first, preserves most relevant.
+
+### Context Compression (`@guppy/core`)
+
+- **Hybrid compression** - deterministic rolling recap + optional LLM summary, measured on real models (16 compressions bounding a 47 KB-ledger run; honest numbers in `docs/live/live-compression-ab.md`).
+- **Token estimation** - tiktoken encoder with caching (expensive to construct, reused across calls). Fallback to character-based estimation if tiktoken fails.
+
+### Gated Verify → Retry → Memory Loop (`@guppy/control-plane`)
+
+- **Baseline gate** - snapshot test state before the agent acts; verify after to catch regressions.
+- **Attempt management** - configurable attempt budget with failure-fed context for each retry.
+- **Memory distillation** - extracts fixes from failed trajectories, stores per-repo and per-user with relevance scoring.
+- **Merge back under gate** - agent changes merged only when verification passes; rejected changes fed into next attempt.
+- **Plan mode** - plan production, revision trail, and `/build` approval workflow. Plans are event-sourced with `PlanProducedEvent`, `PlanRevisedEvent`, `PlanApprovedEvent`.
+
+### Verification Engine (`@guppy/verification-engine`)
+
+- **7-level ladder** (0-6): typecheck → lint → tests → property → integration → repo-declared invariant → custom gate.
+- **Configurable per repo** - `.guppy/verification.json` defines which levels run and their commands.
+- **Missing-tool skip matrix** - missing tools are *skips with a note*, never agent faults. CI passes even when a tool isn't installed.
+- **Escalation budget** - `escalateAndVerify()` runs levels sequentially, stopping on failure or budget exhaustion.
+- **Output parsing** - `parseLintErrors()` and `parseTestResults()` extract structured data from tool output.
+
+### Workspace Management (`@guppy/workspace`)
+
+- **Git worktrees** - isolated branches (`guppy-<8-hex>`) with automatic merge-back on success.
+- **Plain-copy worktrees** - for non-git repos and fixtures; full directory copy with filter (skips `node_modules`, `.guppy`).
+- **`execLocal`** - run commands inside worktrees with path containment and symlink defense.
+- **`mergeBack`** - commit agent edits on workspace branch, then merge into repo. Supports `--no-commit` overlay for uncommitted changes.
+- **`adoptWorkspace`** - resume interrupted runs by re-attaching existing worktrees.
+- **GC (garbage collection)** - reap crashed-run residue: orphaned branches, stale worktrees, aged plain-copy dirs. Configurable `maxAgeDays`, `--force`, `--dry-run`.
+- **Dependency provisioning** - local mode: symlink source `node_modules` into worktree. Container mode: bind-mount at `/workspace/node_modules`.
+- **Patch parsing** - `parseUnifiedDiff()` and `applyHunks()` for structured patch application.
+
+### Memory Store (`@guppy/memory`)
+
+- **Fix extraction** - `extractFixes()` pulls structured fixes from event trajectories (file changes, test results, error messages).
+- **Relevance scoring** - keyword matching, error-text overlap, and recency boost (0.3 for <1 hour, 0.2 for <24 hours).
+- **Per-repo and per-user** - fixes stored with repo ID and user ID for cross-session learning.
+- **SQLite backend** - fast queries, portable, zero-config.
+
+### Skills System (`@guppy/skills`)
+
+- **Builtin skills** - pre-defined conventions for common patterns.
+- **Skill installation** - `guppy skill install [source]` from markdown files with provenance tracking.
+- **Skill markdown format** - name, description, tags, and body in a parseable markdown structure.
+- **Tag-based matching** - skills selected by task keyword overlap and tag relevance.
+- **Registry** - loaded from `~/.guppy/skills/` with built-in + installed skill merging.
+
+### MCP Integration (`@guppy/mcp`)
+
+- **Server registration** - `guppy mcp add/remove/list` for managing MCP tool servers.
+- **Three-layer sandbox**:
+  1. **Scrubbed environment** - API keys and secrets stripped; only explicitly registered env vars passed through.
+  2. **Process tree isolation** - `collectDescendants()` and `killProcessTree()` ensure no zombie processes.
+  3. **Tool prefixing** - MCP tools namespaced with server name to avoid collisions.
+- **Process tracking** - `trackMcpProcess()` / `untrackMcpProcess()` for lifecycle management.
+
+### Sleep Cycle (`@guppy/sleep-cycle`)
+
+- **Session replay** - `replayAllSessions()` and `sessionSummaries()` for analyzing past runs.
+- **Failure clustering** - `clusterSessions()` groups failures by error pattern and file path.
+- **Candidate fixes** - `matchCandidateFixes()` suggests memory-based fixes for clustered failures.
+- **Report rendering** - `renderReport()` produces human-readable analysis with fix suggestions.
+
+### Event Sourcing (`@guppy/event-store`)
+
+- **21 event types** - `TaskStarted`, `ContextSelected`, `ModelCalled`, `ModelStreamed`, `AssistantMessage`, `FinalAnswer`, `ContextCompressed`, `ToolCalled`, `ToolReturned`, `FileChanged`, `Test`, `Typecheck`, `Lint`, `VerificationEscalated`, `CheckpointCreated`, `AgentForked`, `AgentMerged`, `PlanProduced`, `PlanRevised`, `PlanApproved`, `TrajectoryCompleted`.
+- **SQLite index** - fast queries by task, session, event type, and timestamp.
+- **Append-only** - immutable trajectory logs for audit and replay.
+
+### Model Catalog (`@guppy/models`)
+
+- **39 providers / 1,220 models** - live-fetched from provider APIs.
+- **Free-tier-first** - prioritizes models with free quotas (Groq, Google AI Studio, NVIDIA).
+- **Cost/context metadata** - per-model pricing, context window, and capability flags.
+- **Compatible filter** - `guppy models --compatible` shows only models that work with your configured providers.
+
+### Docker Sandbox
+
+- **Path containment** - worktree mounted at `/workspace` with symlink defense.
+- **Credential scrubbing** - API keys stripped from container env; only explicit overrides passed.
+- **Resource limits** - configurable memory and CPU limits.
+- **Network modes** - `none` (default), `bridge`, or `host` for different isolation needs.
+- **`--local` mode** - containerless dev with symlinked `node_modules`.
+
+### Fullscreen TUI
+
+- **`guppy chat`** - fullscreen terminal UI on a TTY; readline REPL as piped fallback.
+- **Plan mode** - visual plan display with `/build` approval workflow.
+- **Live streaming** - real-time model output and tool execution.
+- **Themes** - customizable color schemes.
+- **Interrupts** - Ctrl+C cancels in-flight turns cleanly.
+
+### CLI Commands
+
+```
+guppy run [task]          One-shot gated task
+guppy chat                Interactive chat (TUI or REPL)
+guppy replay <task> <s>   Replay a session
+guppy trace <task>        Trace a task's event log
+guppy gc                  Garbage collect crashed-run residue
+guppy skill add/install/remove/list  Manage skills
+guppy mcp add/remove/list            Manage MCP servers
+guppy benchmark           Run bench suite
+guppy providers           List configured providers
+guppy models [query]      Browse model catalog
+guppy config set/remove/path  Manage provider keys
+guppy setup               Interactive provider wizard
+```
+
+### Benchmark Harness (`@guppy/bench-runner`)
+
+- **21 hermetic fixtures** - zero-dependency repos, ground truth = test exit code.
+- **A/B configs** - compare model/configurations head-to-head.
+- **`--dry-run`** - materialize fixtures, gate red, and report without an LLM.
+- **`loop-demo`** - full context→action→verify→memory loop in a single command.
+- **Offline failure clustering** - `sleep-cycle` analyzes past runs for patterns.
+- **Dataset materialization** - `materializeDatasetInstance()` for reproducible test patches.
 
 **The receipts:**
 
