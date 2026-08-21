@@ -63,7 +63,7 @@ The learn → act → verify → remember loop is **built, tested, and proven on
 **The receipts:**
 
 - **20/20** bench fixtures passing on `qwen/qwen3.6-27b` (Groq free) — `docs/bench-results/launch-qwen-groq/`
-- **323 tests across 13 packages, all green**; `guppy-bench sanity` **21/21** fixtures clean (clean repo green, mutated red); container e2e (run/merge + resume) executing for real
+- **325 tests across 13 packages, all green**; `guppy-bench sanity` **21/21** fixtures clean (clean repo green, mutated red); container e2e (run/merge + resume) executing for real
 - **Live recordings of real runs** — `docs/live/`: `live-run.md`, `live-chat.md`, `live-run-container.md`, `tui-signoff.md`, `live-compression-ab.md`
 
 ---
@@ -75,7 +75,7 @@ Requirements: Node ≥ 20, pnpm 11, and Docker Desktop (for the sandbox default)
 ```bash
 pnpm install
 pnpm build
-pnpm test        # 323 tests across 13 packages
+pnpm test        # 325 tests across 13 packages
 
 # Store your provider key in ~/.guppy/config.json (interactive wizard),
 # or script it: `pnpm cli -- config set groq <key> --default-model qwen/qwen3.6-27b`

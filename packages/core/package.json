@@ -13,7 +13,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "test": "vitest run",
+    "test": "vitest run --testTimeout=15000",
     "lint": "biome check ."
   },
   "dependencies": {

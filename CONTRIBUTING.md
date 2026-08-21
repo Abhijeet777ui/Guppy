@@ -28,7 +28,7 @@ You don't need an API key to develop: the deterministic-first pillar means the e
 
 - **Monorepo:** pnpm workspace. Packages in `packages/` (`core`, `contracts`, `event-store`, `workspace`, `verification-engine`, `context-engine`, `memory`, `skills`, `mcp`, `models`), apps in `apps/` (`control-plane` = the CLI/TUI, `bench-runner` = `guppy-bench`, `sleep-cycle`).
 - **Per-package checks:** `pnpm --filter @guppy/core test` (or `build`) from the repo root.
-- **The bench:** `node apps/bench-runner/dist/cli.js sanity` after a build. Real-model A/Bs go in `docs/bench-results/` with the merged JSON + report.
+- **The bench:** `node apps/bench-runner/dist/cli.js sanity` after a build. Real-model A/Bs go in `docs/bench-results/` with the merged JSON + report. (Note: on a fresh install, the `guppy-bench` / `sleep-cycle` bin shims don't exist — pnpm creates bins at install time, before `dist/` exists, and doesn't retro-create them after `pnpm build`. Run the CLI via `node apps/bench-runner/dist/cli.js` directly, or re-run `pnpm install` after building.)
 - **Dogfooding is encouraged:** Guppy is a harness — run it on its own bugs (`pnpm cli -- run "..."`).
 
 ## Good first contributions
