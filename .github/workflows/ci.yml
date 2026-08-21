@@ -36,6 +36,9 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: pnpm
 
+      - name: Check vitest timeouts are explicit
+        run: node scripts/check-test-timeouts.mjs
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
