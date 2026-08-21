@@ -74,6 +74,13 @@ The learn → act → verify → remember loop is **built, tested, and proven on
 - **Hybrid compression** - deterministic rolling recap + optional LLM summary, measured on real models (16 compressions bounding a 47 KB-ledger run; honest numbers in `docs/live/live-compression-ab.md`).
 - **Token estimation** - tiktoken encoder with caching (expensive to construct, reused across calls). Fallback to character-based estimation if tiktoken fails.
 
+### ContextOps - the cost-of-context meter (`@guppy/control-plane` + `@guppy/bench-runner`)
+
+- **Live token-savings scoring** - every model payload (`{ model, messages, tools }`) is captured after each turn and scored through [ContextOps](https://pypi.org/project/contextops/), an embedding-free structural linter for LLM context. The `ContextSavingsTracker` computes `tokensSaved = round(total_tokens x estimated_reduction_pct / 100)` per capture and accumulates a session total.
+- **Visible in every surface** - the TUI footer shows `saved ~N`, the CLI prints `Context savings (ContextOps, est.): ~N` after each run, and bench reports include a "Tokens saved (est.)" column with per-payload CHS (context health score), wasted tokens, and FAIL counts.
+- **Best-effort, never fatal** - if Python or ContextOps isn't installed, scoring silently stops and the figure is omitted. No runtime dependency, no install requirement.
+- **Proven impact** - real A/B on `longhorizon-ledger`: tight compression = 42 wasted tokens / zero FAIL payloads; default retention = 52,194 wasted / 6 FAIL payloads; no compression = 386,597 wasted / gate failure. ContextOps independently confirmed the compression finding.
+
 ### Gated Verify → Retry → Memory Loop (`@guppy/control-plane`)
 
 - **Baseline gate** - snapshot test state before the agent acts; verify after to catch regressions.
