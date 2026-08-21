@@ -128,6 +128,34 @@ describe('VerificationEngine config wiring', () => {
     }
   });
 
+  it('level 6 (ADR-013) is a repo-declared invariant gate: unconfigured → skip-with-note, never a failure', () => {
+    const dir = fixtureDir(null); // No guppy.json — default ladder.
+    try {
+      const engine = makeEngine(dir);
+      // Default level-6 command is dafny-style; dafny is not installed, so
+      // the level is unavailable and the skip reason says the repo never
+      // declared an invariant gate (not that dafny is missing).
+      expect(engine.levelAvailable(6)).toBe(false);
+      expect(engine.levelSkipReason(6)).toContain('no invariant gate declared');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('level 6 runs when the repo declares an invariant gate in guppy.json', () => {
+    const dir = fixtureDir(
+      JSON.stringify({
+        verification: { levels: { '6': ['node', '--test', 'test/invariant.test.ts'] } },
+      }),
+    );
+    try {
+      const engine = makeEngine(dir);
+      expect(engine.levelAvailable(6)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('ignores invalid levels and commands without breaking the engine', () => {
     const dir = fixtureDir(
       JSON.stringify({

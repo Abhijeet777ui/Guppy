@@ -440,7 +440,7 @@ it as realized savings.
 | `/setup [provider] [key]` | — | open settings; with args, store key |
 | `/plan` | — | enter plan mode (Slice 4) |
 | `/build` | — | execute the approved plan |
-| `/verify <0-5>` | level | set gate strictness |
+| `/verify <0-6>` | level | set gate strictness (6 = repo-declared invariant gate) |
 | `/clear` | — | clear the transcript (not the session) |
 | `/exit`, `/quit` | — | leave chat |
 
@@ -473,7 +473,7 @@ guppy run "<task>"        # run one task, non-interactive
   --local                 # run without Docker
   --resume                # continue the last interrupted run
   --thinking <level>      # reasoning effort
-  --verify <0-5>          # gate strictness
+  --verify <0-6>          # gate strictness (6 = repo-declared invariant gate)
 ```
 
 ### Power-user surface (collapsed under a "more" section)

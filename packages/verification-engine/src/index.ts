@@ -53,7 +53,10 @@ const DEFAULT_LEVEL_COMMANDS: Record<VerificationLevel, string[]> = {
   3: ['npm', 'test'],
   4: ['npm', 'run', 'test:property', '--if-present'],
   5: ['npm', 'run', 'test:integration', '--if-present'],
-  6: ['dafny', 'verify'], // Unsupported: no tooling setup (CLI rejects -v 6)
+  6: ['dafny', 'verify'], // Repo-declared invariant gate (ADR-013): default is
+  // Dafny-style; a repo opts into any invariant checker (dafny, a custom
+  // script, …) via guppy.json verification.levels.6. When no tool is
+  // installed it is a skip-with-note (ADR-011), never an agent fault.
 };
 
 // ---------------------------------------------------------------------------
@@ -197,6 +200,12 @@ export class VerificationEngine {
     if (this.alwaysAvailableLevels.has(level)) return undefined;
     const tool = this.levelCommands[level]?.[0];
     if (!tool) return undefined;
+    // Level 6 (ADR-013): the ladder top is a repo-declared invariant gate, not
+    // a tool every repo is expected to ship. When the repo never opted in,
+    // say that instead of blaming a missing dafny install.
+    if (level === 6 && !this.configuredLevels.has(6)) {
+      return `no invariant gate declared for this repo — add verification.levels.6 to guppy.json, or install '${tool}'`;
+    }
     return `'${tool}' is not installed in this repo`;
   }
 

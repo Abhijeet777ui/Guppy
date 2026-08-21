@@ -779,7 +779,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
     console.log(
       chalk.gray('  /thinking [level]  show or set reasoning level (off|minimal|low|medium|high|xhigh|max)'),
     );
-    console.log(chalk.gray('  /verify <level>    set the verification level (0-5; 6 formal = unsupported)'));
+    console.log(chalk.gray('  /verify <level>    set the verification level (0-6; 6 = repo-declared invariant gate)'));
     console.log(chalk.gray('  /plan              plan a task read-only (no edits) before executing'));
     console.log(chalk.gray('  /build             approve and run the last plan, or return to build mode'));
     console.log(chalk.gray('  /edit [text]       revise the pending plan by hand, then /build to run it'));
@@ -913,7 +913,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
       `  Model: ${options.model}  Verification: ${verificationLevel}  Max turns: ${options.maxTurns}`,
     ),
   );
-  console.log(chalk.gray('  Commands: /help  /models  /provider  /model  /verify <0-5>  /plan  /build  /exit'));
+  console.log(chalk.gray('  Commands: /help  /models  /provider  /model  /verify <0-6>  /plan  /build  /exit'));
   rl.prompt();
 
   rl.on('line', (line) => {
@@ -938,11 +938,13 @@ export async function runChat(options: ChatOptions): Promise<void> {
     }
     if (userInput.startsWith('/verify ')) {
       const level = Number(userInput.slice('/verify '.length).trim());
-      if (Number.isInteger(level) && level >= 0 && level <= 5) {
+      if (Number.isInteger(level) && level >= 0 && level <= 6) {
         verificationLevel = level as VerificationLevel;
         console.log(chalk.gray(`  Verification level set to ${level}.`));
       } else {
-        console.log(chalk.yellow('  Usage: /verify <level 0-5> (level 6 formal verification is unsupported)'));
+        console.log(
+          chalk.yellow('  Usage: /verify <level 0-6> (6 = repo-declared invariant gate, skipped when unconfigured)'),
+        );
       }
       prompt();
       return;

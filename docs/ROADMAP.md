@@ -54,8 +54,10 @@ the user sees it, plus a visual sign-off by the user on a real terminal.
 - [x] **Assistant reply** — the model's final text answer is exposed
       (Track C) and rendered as a markdown chat message via pi-tui
       `Markdown`, so chat is a real You/Guppy conversation.
-- [~] Acceptance: headless assertions green; **visual sign-off pending** —
-      run `pnpm cli -- chat` and approve the look.
+- [x] **Acceptance: signed off (2026-08-21).** Headless assertions green;
+      visual sign-off evidence (headless screen dumps + a real-model Groq
+      session) recorded at `docs/live/tui-signoff.md`; the user approved the
+      look. M1 closed.
 
 ### M2 — Selection & onboarding
 - [x] **Arrow-key provider + model pickers** (`apps/control-plane/src/pickers.ts`)
@@ -88,7 +90,7 @@ the user sees it, plus a visual sign-off by the user on a real terminal.
 - [x] Plan/build indicator stubs (context bar shows plan/build; /plan and /build
       flip it; plan mode refuses turns until Slice 4 ships the real plan phase).
       Headless screen dumps verify the layout; final look = user sign-off
-      pending.
+      (evidence at `docs/live/tui-signoff.md`, 2026-08-21). M3 closed.
 
 ---
 
@@ -108,9 +110,9 @@ spec §8 depends on:
 
 ## Execution order
 
-1. **M1** — headless harness + faithful chat screen + assistant reply ✅
+1. **M1** — headless harness + faithful chat screen + assistant reply ✅ (user sign-off 2026-08-21)
 2. **M2** — selection + onboarding ✅
-3. **M3** — polish ✅ (interrupt, theme, exit dump, plan/build indicator stubs; final look = user sign-off)
+3. **M3** — polish ✅ (interrupt, theme, exit dump, plan/build indicator stubs; user sign-off 2026-08-21)
 4. **Slice 2 (MCP)** — external tools ✅ (`@guppy/mcp` + `guppy mcp add/list/remove`)
 5. **Slice 4 (plan/build)** ✅ — read-only plan phase (`sessionManager.plan` + a dedicated read-only core runtime), plan-gate footer, `/build` approval, `/edit` plan revision; `PlanProduced`/`PlanRevised`/`PlanApproved` events (the revision records a model-plan line diff)
 6. **Slice 5 (skills)** ✅ — `@guppy/skills` + `guppy skill install <name|url|path> [--registry] [--force]`, `guppy skill remove <name>`, `guppy skill list` (user + repo origins); builtin registry (code-review, write-tests, commit-hygiene, refactor-rename); installs land in `~/.guppy/skills` so they follow the user across repos, and SessionManager merges them into every run/chat context (repo skills win collisions)

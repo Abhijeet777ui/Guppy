@@ -18,7 +18,7 @@ This document lists every capability guppy has today, every capability planned, 
 **Edge vs prime-agent:** prime-agent is an *external process* you spawn, frame, and parse — guppy's brain is a library in the same process. **Edge vs pi:** pi is a *library* with its own model registry and assumptions; guppy owns the entire pipeline. **Edge vs Claude Code / Codex:** those are closed harnesses locked to one vendor's model stack; guppy runs any model, including offline local ones with no API key.
 
 ### 1.2 Gated autonomy — the harness decides success
-The signature differentiator. After every attempt, guppy runs a **verification gate** (7 levels: syntax → typecheck → lint → unit tests → property tests → integration tests → formal verification) and only a green gate counts as success. The model never gets to declare victory. Levels 0-5 are exercised end-to-end; level 6 (formal) is documented as unsupported (the CLI rejects it).
+The signature differentiator. After every attempt, guppy runs a **verification gate** (7 levels: syntax → typecheck → lint → unit tests → property tests → integration tests → formal verification) and only a green gate counts as success. The model never gets to declare victory. Levels 0-5 are exercised end-to-end; level 6 is the **repo-declared invariant gate** (ADR-013): a repo opts in via `guppy.json` `verification.levels.6` (dafny, a custom checker, …), and when no invariant tool is installed the level is a skip-with-note, never a failure (ADR-011).
 
 - Per-level parsers (tsc, eslint, vitest/spec, TAP) turn raw output into structured per-file/per-test errors.
 - Failure evidence is fed back into the next attempt's context automatically.
@@ -134,7 +134,7 @@ Each entry is a bare command array or `{ "command": [...], "alwaysAvailable": tr
 Progressive summarization of the trajectory mid-run so multi-hour tasks stay under the context budget — the "long-horizon" promise made real.
 
 ### 2.11 ~~Interactive mode~~ — ✅ shipped
-`guppy chat`: a REPL over the same gate + memory + event-store loop, streamed live, with `/help`, `/verify <0-5>` (6 formal = unsupported), and `/exit`.
+`guppy chat`: a REPL over the same gate + memory + event-store loop, streamed live, with `/help`, `/verify <0-6>` (6 = repo-declared invariant gate, skipped when unconfigured), and `/exit`.
 
 ### 2.12 Hardened Docker sandbox — ✅ built + e2e
 `guppy/executor:latest` is built (node 22.23, git, python3, make/g++, pnpm, non-root `guppy` user) and container-mode runs/resume/merge are e2e-tested, including reaping orphaned containers on resume and honoring exec timeouts. Remaining hardening (already configured in `startContainer`): network egress control (`networkMode`) and resource limits (`memoryLimit`/`cpuLimit`) — tuned per deployment rather than defaulted.

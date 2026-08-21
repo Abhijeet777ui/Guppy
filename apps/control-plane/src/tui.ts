@@ -256,9 +256,9 @@ export function runTui(options: ChatOptions, terminal: Terminal = new ProcessTer
       },
       {
         name: 'verify',
-        description: 'set verification level (0-5)',
+        description: 'set verification level (0-6)',
         argumentHint: 'level',
-        getArgumentCompletions: () => ['0', '1', '2', '3', '4', '5'].map((v) => ({ value: v, label: v })),
+        getArgumentCompletions: () => ['0', '1', '2', '3', '4', '5', '6'].map((v) => ({ value: v, label: v })),
       },
       { name: 'verbose', description: 'toggle raw event logging' },
       {
@@ -507,7 +507,7 @@ export function runTui(options: ChatOptions, terminal: Terminal = new ProcessTer
       chalk.gray('  /model [id]        switch the active model (type /model <partial> for a dropdown)'),
       chalk.gray('  /provider [id]     list providers, or filter to one provider'),
       chalk.gray('  /thinking [level]  show or set reasoning level (off|minimal|low|medium|high|xhigh|max)'),
-      chalk.gray('  /verify <level>    set the verification level (0-5)'),
+      chalk.gray('  /verify <level>    set the verification level (0-6; 6 = repo-declared invariant gate)'),
       chalk.gray('  /verbose           toggle raw event/engine logging on or off'),
       chalk.gray('  /plan              plan a task read-only (no edits) before executing'),
       chalk.gray('  /build             approve and run the last plan, or return to build mode'),
@@ -633,12 +633,14 @@ export function runTui(options: ChatOptions, terminal: Terminal = new ProcessTer
 
     function setVerify(line: string): void {
       const level = Number(line.slice('/verify '.length).trim());
-      if (Number.isInteger(level) && level >= 0 && level <= 5) {
+      if (Number.isInteger(level) && level >= 0 && level <= 6) {
         verificationLevel = level as VerificationLevel;
         transcript.append(chalk.gray(`Verification level set to ${level}.`));
         refreshContextBar();
       } else {
-        transcript.append(chalk.yellow('Usage: /verify <level 0-5> (level 6 formal verification is unsupported)'));
+        transcript.append(
+          chalk.yellow('Usage: /verify <level 0-6> (6 = repo-declared invariant gate, skipped when unconfigured)'),
+        );
       }
       tui.requestRender();
     }
@@ -927,7 +929,9 @@ export function runTui(options: ChatOptions, terminal: Terminal = new ProcessTer
         return;
       }
       if (line === '/verify') {
-        transcript.append(chalk.yellow('Usage: /verify <level 0-5> (6 formal verification is unsupported).'));
+        transcript.append(
+          chalk.yellow('Usage: /verify <level 0-6> (6 = repo-declared invariant gate, skipped when unconfigured).'),
+        );
         tui.requestRender();
         return;
       }

@@ -160,7 +160,7 @@ Two views over the *identical* engine — every message is a full gated task run
 | `/model <id>` | Switch model mid-session (`/model qwen` opens a dropdown) |
 | `/setup [p] [key]` | Show config, or store a provider key |
 | `/thinking [level]` | Show or set the reasoning level |
-| `/verify <0-5>` | Change the verification level for subsequent turns |
+| `/verify <0-6>` | Change the verification level for subsequent turns (6 = repo-declared invariant gate, skipped when unconfigured) |
 | `/verbose` | Toggle raw event/engine logging |
 | `/theme <dark\|light>` | Swap the TUI color scheme |
 | `/plan` | Enter read-only planning mode (no edits) |

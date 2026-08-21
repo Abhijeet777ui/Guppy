@@ -74,13 +74,13 @@ Each phase lists **What**, **Why**, **Work**, and **Testing / acceptance**. "✅
 1. **Wired levels 2/4/5 through `guppy run`** — the real fix was architectural: tool levels now resolve from the **source repo's** node_modules via `npm exec --prefix <repo> -- <tool>` and execute against the worktree. Worktrees deliberately carry no node_modules (copy strips it; git worktrees have only tracked files), so a bare `npx eslint`/`npx tsc` there either silently skipped (no local bin → skipped by the availability guard) or downloaded a fresh tool — a real product gap, not just a test gap.
 2. **Fixed the eslint parser** — it expected `path:line:col` on one line, but real eslint 9's stylish reporter puts the file on its own header line with right-aligned rule ids. `parseLintErrors` now handles both, validated against captured eslint 9.39.5 output.
 3. **Lint audit trail** — new `LintPassed`/`LintFailed` contract events (level 2 previously logged nothing), rendered in the live stream.
-4. **Level 6 marked unsupported** — the CLI rejects `-v 6` with a clear message (run + chat + `/verify`); docs say levels 0-5 supported.
+4. **Level 6 redefined as the repo-declared invariant gate (ADR-013)** — `-v 6` is accepted everywhere (run + chat + `/verify`); a repo opts in via `guppy.json` `verification.levels.6`, and when no invariant tool is configured the level is a skip-with-note (ADR-011), never a failure.
 
 **Testing (shipped):**
 - verification-engine 9/9 (new `parseLintErrors` suite against real eslint 9 output).
 - control-plane 3/3 e2e — a lint-violation fixture (hermetic eslint-compatible shim emitting genuine stylish format), a property-test fixture (unit green, property red until the fix), and an integration-test fixture — each fails the gate until the correct fix, and each asserts its level's failure event landed in the store.
 - Manual real-tool smoke: real `eslint@9.39.5` driven through the engine via `npm exec --prefix`, gate correctly red with per-file/line/rule errors against the worktree.
-- CLI smoke: `-v 6` / `-v 9` rejected; help shows `(0-5; 6 formal = unsupported)`.
+- CLI smoke: `-v 6` accepted (runs the repo-declared invariant gate, or skips-with-note when unconfigured); `-v 9` rejected; help shows `(0-6; 6 = repo-declared invariant gate…)`.
 
 ---
 

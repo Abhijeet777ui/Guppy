@@ -84,16 +84,17 @@ function optNumber(value: unknown): number | undefined {
 }
 
 /**
- * Parse the -v verification level. Level 6 (formal verification / Dafny) has
- * no tooling set up yet — reject it loudly instead of silently never running
- * a gate, which is what requesting it would otherwise do.
+ * Parse the -v verification level. Level 6 is the repo-declared invariant
+ * gate (ADR-013): a repo opts in via guppy.json verification.levels.6, and
+ * when no invariant tool is installed the level is a skip-with-note, never a
+ * failure — so requesting it is always legal, never a silently un-run gate.
  */
 function parseVerificationLevel(value: string): VerificationLevel {
   const level = parseInt(value, 10);
-  if (!Number.isInteger(level) || level < 0 || level > 5) {
+  if (!Number.isInteger(level) || level < 0 || level > 6) {
     console.error(
       chalk.red(
-        `[Guppy] Invalid verification level "${value}": use 0-5 (level 6 formal verification is not supported yet).`,
+        `[Guppy] Invalid verification level "${value}": use 0-6 (level 6 = the repo-declared invariant gate).`,
       ),
     );
     process.exit(1);
@@ -303,7 +304,7 @@ program
   .option('--thinking <level>', `Reasoning level for catalog models with reasoning (${THINKING_LEVELS.join('|')})`)
   .option('--no-stream', 'Disable streaming model output (wait for the full response)')
   .option('-t, --max-turns <number>', 'Maximum turns', '20')
-  .option('-v, --verification <level>', 'Verification level (0-5; 6 formal = unsupported)', '3')
+  .option('-v, --verification <level>', 'Verification level (0-6; 6 = repo-declared invariant gate, skipped when unconfigured)', '3')
 
   .option('--local', 'Run without Docker (host execution, plain worktrees)')
   .option('--max-history-tokens <n>', 'History-token budget before older turns are compressed into a recap (0 = never compress)', '60000')
@@ -503,7 +504,7 @@ program
   .option('--max-history-tokens <n>', 'History-token budget before older turns are compressed into a recap (0 = never compress)', '60000')
   .option('--history-summary <mode>', "Summarize the compressed history with an LLM ('llm') or keep the deterministic recap ('none')", 'none')
   .option('-t, --max-turns <number>', 'Maximum turns', '20')
-  .option('-v, --verification <level>', 'Verification level (0-5; 6 formal = unsupported)', '3')
+  .option('-v, --verification <level>', 'Verification level (0-6; 6 = repo-declared invariant gate, skipped when unconfigured)', '3')
 
   .option('--local', 'Run without Docker (host execution, plain worktrees)')
   .option('--keep-worktree', 'Keep the worktree after each turn instead of merging changes back')
