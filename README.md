@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="guppy_logo.png" alt="Guppy Logo" width="200">
+</p>
+
 # Guppy 🐟
 
 **A verified agent harness for long-horizon software engineering.** Instead of just giving an LLM more tools and tokens, Guppy actively manages the **context → action → verification → memory → context** loop - and *proves* every step of it.
