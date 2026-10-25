@@ -2,50 +2,45 @@
   <img src="guppy_logo.png" alt="Guppy Logo" width="200">
 </p>
 
-# Guppy 🐟
+# Guppy
 
-**A verified agent harness for long-horizon software engineering.** Instead of just giving an LLM more tools and tokens, Guppy actively manages the **context → action → verification → memory → context** loop - and *proves* every step of it.
+**A verified agent harness for long-horizon software engineering.**
 
----
+Most autonomous coding agents fail when scaling beyond single-turn edits: models declare tasks complete without mechanical proof, unmanaged context accumulates tokens and degrades reasoning, and crashes or tool errors leave workspaces in corrupted states.
 
-## Why we're building Guppy (the fish, and the point)
+Guppy manages the closed engineering loop:
 
-The AI world is full of **whales** - billion-dollar labs, GPU farms, and frameworks that make enormous claims on a single cherry-picked demo. A whale needs an ocean to live.
+$$\text{Context} \longrightarrow \text{Action} \longrightarrow \text{Verification} \longrightarrow \text{Memory} \longrightarrow \text{Context}$$
 
-Guppy is named for the other end of the aquarium. The guppy (*Poecilia reticulata*) is one of the **hardiest, most adaptable fish on earth** - it thrives in a small tank, survives conditions that kill bigger fish, breeds forward every single generation, and does it all without an ocean. The "millions fish," it's called. We are not building a whale. **We are building a guppy.**
-
-That's not a cute mascot - it's the engineering charter:
-
-| The guppy | The harness |
-|---|---|
-| Survives in a small tank | **Solo-scale by design.** Git + SQLite + Docker. No K8s, no vector DBs, no GPU training. Runs on a laptop. |
-| Hardy in bad water | **Works on free-tier models** and runs its whole test suite **offline, with no API keys** (deterministic-first). |
-| A "millions fish" - breeds every generation | **Compounding.** Memory → skills → sleep-cycle distillation, and nothing ships unless the benchmark proves it. |
-| A community fish | **Built in the open.** The roadmap is a list of gated, measurable chunks anyone can pick up. |
-| Colorful | The fullscreen TUI, live streaming, a real terminal experience. |
-| Doesn't brag, just swims | **Evidence over vibes.** Every capability claim is a recorded run, a green test, or a merged artifact - never a screenshot of a demo that worked once. |
-
-**The problem we're building against:** agent frameworks *claim*; they almost never *prove*. A model says "done" and the harness believes it. A framework says "self-improving" and there's one blog post. The result is a field where a demo is treated as evidence.
-
-**What we're trying to achieve:** a harness where *the gate is the arbiter* - the machine decides the task is done, never the model's self-report - and where every improvement is benchmark-gated. We want to hand a computer a multi-hour task on a real repo and come back to either a proven-green result or a provably complete record of exactly where and why it stalled. And we want that to work for a solo developer on a laptop, not a lab.
+Every action is isolated in a disposable worktree or container, every interaction is recorded in an append-only event store, and tasks only merge when external verification passes.
 
 ---
 
-## The promise
+## Architectural Principles
 
-> **Hand Guppy a multi-hour task on a real repo, walk away, and come back to one of two things:**
->
-> 1. **a proven-green result** - the full verification ladder passed (typecheck → lint → tests → property → integration → invariant gate), merged back into your repo, or
-> 2. **an evidence trail** - the event log shows exactly where and why it stalled, and the log is *provably complete*: every byte the model ever saw is reconstructable from it.
+1. **The gate is the arbiter.**
+   A model cannot declare its own success. Task completion is determined strictly by mechanical verification gates (typecheck → lint → unit tests → property tests → integration → repo invariants). Failures are fed back into the context for subsequent retry attempts.
 
-In exchange, Guppy promises four things no raw model loop gives you:
+2. **Full observability and replayability.**
+   Every model payload, tool invocation, and gate result is persisted to an immutable event store (msgpack + SQLite index). Interrupted sessions survive crashes and laptop sleep via turn-level checkpointing (`guppy run --resume`).
 
-1. **Proven, not claimed, success.** Layered verification gates (typecheck → lint → tests → property → integration → repo-declared invariant) with an escalation budget. The harness says "done" - the model's self-report never does.
-2. **Full observability + replay.** Everything is event-sourced. `guppy trace` replays any session; `guppy resume` continues after crashes or a closed laptop. Long jobs survive interruptions.
-3. **Compounding improvement.** Every trajectory is data. Recurring fixes distill into memory and skills, and changes are promoted only when the benchmark proves they help.
-4. **Evidence over vibes.** The bench A/Bs every significant change against its baseline. Claims are measured, not asserted.
+3. **Isolated, non-destructive execution.**
+   Modifications run in isolated Git worktrees (`guppy-<hex>`) or Docker sandboxes with path containment and symlink defenses. Only passing runs are merged back into the target branch.
 
-**Honest non-edges:** single-turn code quality and interactive polish are table stakes - those come from the models and the ecosystem, and we don't pretend to beat them. Our edge is the *loop that verifies, remembers, and improves*.
+4. **Context discipline and compression.**
+   Rather than stuffing large context windows, Guppy uses cache-aware section ordering (static repo maps and skills first, dynamic files and errors last), token budgeting, rolling recaps, and structural context linting via ContextOps.
+
+5. **Solo-scale and hermetic by design.**
+   Runs locally on a laptop using Git, SQLite, and Docker—no Kubernetes or external vector databases required. The entire test suite (325 tests) runs hermetically offline without API keys, and the harness supports local runtimes (Ollama) as well as free-tier model providers (Groq, OpenRouter, Google AI Studio).
+
+---
+
+## The Verification Contract
+
+When executing an unattended task on a repository, Guppy provides one of two outcomes:
+
+1. **A verified green result:** Code is merged back into the working tree only after passing the repository's configured verification ladder.
+2. **An evidence trail:** If the attempt budget is exhausted, the event log contains a complete, reconstructable record of every model call, tool execution, and gate failure that occurred.
 
 ---
 
@@ -304,7 +299,3 @@ docs/       status, capabilities, roadmap, live recordings, bench results
 ## License
 
 Apache License 2.0 - see [`LICENSE`](LICENSE).
-
----
-
-*Small tank. Hardy water. Millions of generations. That's the whole pitch.* 🐟
